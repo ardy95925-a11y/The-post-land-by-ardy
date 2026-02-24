@@ -72,7 +72,6 @@ function showView(view) {
         btn.classList.toggle('active', btn.dataset.view === view);
     });
 
-    // Reset DM view when navigating away
     if (view !== 'dm') {
         activeChatFriend = null;
         if (messageListener) { messageListener(); messageListener = null; }
@@ -81,42 +80,102 @@ function showView(view) {
     }
 }
 
+// ---- CHARACTER COUNTER ----
+document.getElementById('post-text').addEventListener('input', function () {
+    const len = this.value.length;
+    const counter = document.getElementById('char-counter');
+    counter.innerText = len + ' / 300';
+    counter.style.color = len > 280 ? '#e53e3e' : '#888';
+    if (len > 300) this.value = this.value.substring(0, 300);
+});
+
+// ---- IMAGE PREVIEW ----
+document.getElementById('post-image').addEventListener('change', function () {
+    const file = this.files[0];
+    const preview = document.getElementById('image-preview');
+    const removeBtn = document.getElementById('remove-image-btn');
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            preview.src = e.target.result;
+            preview.classList.remove('hidden');
+            removeBtn.classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
+function removeImage() {
+    document.getElementById('post-image').value = "";
+    document.getElementById('image-preview').classList.add('hidden');
+    document.getElementById('remove-image-btn').classList.add('hidden');
+}
+
 // ---- POSTS ----
 async function uploadPost() {
     const btn = document.getElementById('upload-btn');
+    const statusEl = document.getElementById('upload-status');
     const text = document.getElementById('post-text').value.trim();
     const tagsRaw = document.getElementById('post-tags').value;
     const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
     const file = document.getElementById('post-image').files[0];
 
-    if (!text) return alert("Please write something first!");
+    if (!text) {
+        statusEl.style.color = '#e53e3e';
+        statusEl.innerText = "Please write something first!";
+        return;
+    }
 
     btn.disabled = true;
     btn.innerText = "Publishing...";
+    statusEl.style.color = '#888';
+    statusEl.innerText = "";
 
-    let imageUrl = "";
-    if (file) {
-        const ref = storage.ref(`posts/${Date.now()}_${file.name}`);
-        await ref.put(file);
-        imageUrl = await ref.getDownloadURL();
+    try {
+        let imageUrl = "";
+
+        if (file) {
+            statusEl.innerText = "Uploading image...";
+            // Sanitize filename to avoid storage path errors
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const storageRef = storage.ref().child(`posts/${currentUser.uid}_${Date.now()}_${safeName}`);
+            const metadata = { contentType: file.type };
+            const snapshot = await storageRef.put(file, metadata);
+            imageUrl = await snapshot.ref.getDownloadURL();
+            statusEl.innerText = "Image uploaded! Saving post...";
+        }
+
+        await db.collection('posts').add({
+            uid: currentUser.uid,
+            email: currentUser.email,
+            text: text,
+            imageUrl: imageUrl,
+            tags: tags,
+            views: 0,
+            likes: 0,
+            likedBy: [],
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        // Reset form
+        document.getElementById('post-text').value = "";
+        document.getElementById('post-tags').value = "";
+        document.getElementById('post-image').value = "";
+        document.getElementById('char-counter').innerText = '0 / 300';
+        removeImage();
+
+        statusEl.style.color = '#38a169';
+        statusEl.innerText = "✓ Posted!";
+        setTimeout(() => { statusEl.innerText = ""; showView('feed'); }, 800);
+
+    } catch (err) {
+        console.error("Upload error:", err);
+        statusEl.style.color = '#e53e3e';
+        statusEl.innerText = "Error: " + err.message;
+    } finally {
+        btn.disabled = false;
+        btn.innerText = "Publish";
     }
-
-    await db.collection('posts').add({
-        uid: currentUser.uid,
-        email: currentUser.email,
-        text: text,
-        imageUrl: imageUrl,
-        tags: tags,
-        views: 0,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-
-    document.getElementById('post-text').value = "";
-    document.getElementById('post-tags').value = "";
-    document.getElementById('post-image').value = "";
-    btn.disabled = false;
-    btn.innerText = "Publish";
-    showView('feed');
 }
 
 function timeAgo(timestamp) {
@@ -134,19 +193,23 @@ function loadPosts() {
         list.innerHTML = "";
 
         if (snapshot.empty) {
-            list.innerHTML = '<p style="text-align:center;color:#888;padding:30px;font-size:0.9rem;">No posts yet. Be the first to post!</p>';
+            list.innerHTML = '<p style="text-align:center;color:#888;padding:40px;font-size:0.9rem;">No posts yet. Be the first!</p>';
             return;
         }
 
         snapshot.forEach(doc => {
             const post = doc.data();
-            const isOwn = post.email === currentUser.email;
+            const isOwn = post.uid === currentUser.uid;
+            const likedBy = post.likedBy || [];
+            const hasLiked = likedBy.includes(currentUser.uid);
+            const likes = post.likes || 0;
+
             const div = document.createElement('div');
             div.className = 'post';
             div.innerHTML = `
                 <div class="post-header">
-                    <span class="post-author" onclick="${isOwn ? '' : `startChat('${post.email}')`}" 
-                          style="${isOwn ? 'cursor:default;color:#333' : ''}"
+                    <span class="post-author ${isOwn ? 'own' : ''}"
+                          onclick="${isOwn ? '' : `startChat('${post.email}')`}"
                           title="${isOwn ? 'You' : 'Message ' + post.email}">
                         ${post.email}${isOwn ? ' (you)' : ''}
                     </span>
@@ -161,8 +224,12 @@ function loadPosts() {
                     ${post.tags && post.tags.length ? `<div class="post-tags">${post.tags.map(t => `<span class="tag">#${t}</span>`).join('')}</div>` : ''}
                 </div>
                 <div class="post-actions">
+                    <button class="action-btn like-btn ${hasLiked ? 'liked' : ''}" onclick="toggleLike('${doc.id}', ${hasLiked})">
+                        ${hasLiked ? '❤️' : '🤍'} ${likes}
+                    </button>
                     <button class="action-btn" onclick="incrementView('${doc.id}')">👁 View</button>
                     ${!isOwn ? `<button class="action-btn" onclick="startChat('${post.email}')">✉️ Message</button>` : ''}
+                    ${isOwn ? `<button class="action-btn delete-btn" onclick="deletePost('${doc.id}', '${post.imageUrl}')">🗑 Delete</button>` : ''}
                 </div>
             `;
             list.appendChild(div);
@@ -176,9 +243,37 @@ function incrementView(postId) {
     });
 }
 
+// ---- LIKES ----
+function toggleLike(postId, hasLiked) {
+    const ref = db.collection('posts').doc(postId);
+    if (hasLiked) {
+        ref.update({
+            likes: firebase.firestore.FieldValue.increment(-1),
+            likedBy: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+        });
+    } else {
+        ref.update({
+            likes: firebase.firestore.FieldValue.increment(1),
+            likedBy: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+        });
+    }
+}
+
+// ---- DELETE POST ----
+async function deletePost(postId, imageUrl) {
+    if (!confirm("Delete this post?")) return;
+    try {
+        await db.collection('posts').doc(postId).delete();
+        if (imageUrl) {
+            try { await storage.refFromURL(imageUrl).delete(); } catch (e) { /* silent */ }
+        }
+    } catch (e) {
+        alert("Could not delete: " + e.message);
+    }
+}
+
 // ---- DMs ----
 function getChatId(emailA, emailB) {
-    // Consistent chat ID regardless of who starts the chat
     return [emailA, emailB].sort().join('__');
 }
 
@@ -200,7 +295,6 @@ function sendDM() {
     if (!text || !activeChatFriend) return;
 
     const chatId = getChatId(currentUser.email, activeChatFriend);
-
     db.collection('chats').doc(chatId).collection('messages').add({
         sender: currentUser.email,
         text: text,
@@ -210,8 +304,7 @@ function sendDM() {
     input.value = "";
 }
 
-// Also allow sending with Enter key
-document.getElementById('msg-input').addEventListener('keydown', function(e) {
+document.getElementById('msg-input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendDM();
@@ -219,7 +312,6 @@ document.getElementById('msg-input').addEventListener('keydown', function(e) {
 });
 
 function loadMessages() {
-    // Cancel any previous listener
     if (messageListener) { messageListener(); messageListener = null; }
 
     const chatId = getChatId(currentUser.email, activeChatFriend);
