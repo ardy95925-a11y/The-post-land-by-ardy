@@ -3,344 +3,257 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SocialSphere - Local Social Media</title>
+    <title>SocialSphere Online</title>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+
     <style>
-        :root {
-            --primary: #0095f6;
-            --bg: #fafafa;
-            --border: #dbdbdb;
-            --text: #262626;
-            --white: #ffffff;
-        }
+        :root { --primary: #0095f6; --bg: #fafafa; --border: #dbdbdb; --white: #ffffff; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+        body { background-color: var(--bg); padding-top: 70px; }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        body { background-color: var(--bg); color: var(--text); }
+        /* Auth Overlay */
+        #auth-overlay { position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .auth-card { width: 300px; padding: 20px; border: 1px solid var(--border); border-radius: 8px; }
 
-        /* Navigation */
-        nav {
-            background: var(--white);
-            border-bottom: 1px solid var(--border);
-            padding: 10px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: fixed;
-            top: 0; width: 100%; z-index: 100;
-        }
-        .nav-links button {
-            background: none; border: none; cursor: pointer; padding: 8px 15px; font-weight: 600; color: var(--text);
-        }
-        .nav-links button.active { color: var(--primary); }
+        /* Nav */
+        nav { background: white; border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; justify-content: space-between; position: fixed; top: 0; width: 100%; z-index: 100; }
+        .nav-links button { background: none; border: none; cursor: pointer; padding: 8px; font-weight: bold; }
 
-        /* Main Container */
-        .container { max-width: 600px; margin: 80px auto 20px; padding: 0 10px; }
-
-        /* Create Post Form */
-        .card { background: var(--white); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-        .form-group { margin-bottom: 15px; }
-        input, textarea, select { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 4px; margin-top: 5px; }
-        button.btn-main { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-weight: bold; }
-        
-        /* Tags Input */
-        .tags-input-container { border: 1px solid var(--border); padding: 5px; border-radius: 4px; display: flex; flex-wrap: wrap; gap: 5px; background: white; }
-        .tag-pill { background: #e0e0e0; padding: 2px 8px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; }
-        .tag-pill span { cursor: pointer; margin-left: 5px; font-weight: bold; }
-
-        /* Post Display */
-        .post { background: var(--white); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
-        .post-header { padding: 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
-        .post-type { font-size: 10px; text-transform: uppercase; background: #eee; padding: 2px 6px; border-radius: 4px; }
-        .post-img { width: 100%; display: block; background: #f0f0f0; max-height: 500px; object-fit: cover; }
+        /* Feed */
+        .container { max-width: 500px; margin: auto; padding: 10px; }
+        .post { background: white; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+        .post-img { width: 100%; display: block; background: #eee; }
         .post-content { padding: 15px; }
-        .post-footer { padding: 10px 15px; border-top: 1px solid var(--border); font-size: 13px; color: #8e8e8e; display: flex; justify-content: space-between; }
-        .tag-list { padding: 0 15px 10px; display: flex; gap: 5px; flex-wrap: wrap; }
-        .tag { color: var(--primary); font-size: 13px; font-weight: 500; }
-
-        /* DM System */
-        #dm-view { display: none; }
-        .chat-list { display: flex; flex-direction: column; gap: 10px; }
-        .friend-item { padding: 15px; border: 1px solid var(--border); border-radius: 8px; background: white; cursor: pointer; display: flex; justify-content: space-between; }
-        .chat-window { display: none; flex-direction: column; height: 70vh; background: white; border: 1px solid var(--border); border-radius: 8px; }
-        .messages { flex-grow: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
-        .msg { padding: 8px 12px; border-radius: 15px; max-width: 80%; font-size: 14px; }
-        .msg.sent { align-self: flex-end; background: var(--primary); color: white; }
-        .msg.received { align-self: flex-start; background: #efefef; }
-        .chat-input-area { display: flex; padding: 10px; border-top: 1px solid var(--border); }
+        .tag { color: var(--primary); margin-right: 5px; font-size: 0.9em; }
         
-        #create-view { display: none; }
-        .hidden { display: none !important; }
+        /* Form */
+        input, textarea { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid var(--border); border-radius: 4px; }
+        .btn { background: var(--primary); color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        
+        #create-view, #dm-view { display: none; }
+        .hidden { display: none; }
+        .views-count { font-size: 0.8em; color: gray; }
     </style>
 </head>
 <body>
 
-<nav>
-    <div class="logo"><strong>SocialSphere</strong></div>
-    <div class="nav-links">
-        <button onclick="showView('feed')" id="btn-feed" class="active">Home</button>
-        <button onclick="showView('create')" id="btn-create">Post</button>
-        <button onclick="showView('dm')" id="btn-dm">DMs</button>
-    </div>
-</nav>
-
-<div class="container">
-    <!-- FEED VIEW -->
-    <div id="feed-view">
-        <div id="posts-container">
-            <!-- Posts injected here -->
+    <!-- LOGIN SCREEN -->
+    <div id="auth-overlay">
+        <div class="auth-card">
+            <h2 style="text-align: center; margin-bottom: 20px;">SocialSphere</h2>
+            <input type="email" id="auth-email" placeholder="Email">
+            <input type="password" id="auth-pass" placeholder="Password">
+            <button class="btn" onclick="handleAuth('login')">Login</button>
+            <button class="btn" onclick="handleAuth('signup')" style="background: #333; margin-top: 10px;">Sign Up</button>
+            <p id="auth-error" style="color: red; font-size: 12px; margin-top: 10px;"></p>
         </div>
     </div>
 
-    <!-- CREATE POST VIEW -->
-    <div id="create-view" class="card">
-        <h3>Create New Post</h3>
-        <div class="form-group">
-            <label>Category</label>
-            <select id="post-category">
-                <option value="General">General</option>
-                <option value="News">News</option>
-                <option value="Tech">Tech</option>
-                <option value="Art">Art</option>
-            </select>
+    <nav>
+        <div onclick="location.reload()" style="cursor:pointer"><strong>SocialSphere</strong></div>
+        <div class="nav-links">
+            <button onclick="showView('feed')">🏠</button>
+            <button onclick="showView('create')">➕ Post</button>
+            <button onclick="showView('dm')">✉️</button>
+            <button onclick="logout()" style="color:red">Logout</button>
         </div>
-        <div class="form-group">
-            <textarea id="post-text" placeholder="What's on your mind?" rows="3"></textarea>
-        </div>
-        <div class="form-group">
-            <label>Image (Optional)</label>
-            <input type="file" id="post-image" accept="image/*">
-        </div>
-        <div class="form-group">
-            <label>Custom Tags (Press Enter)</label>
-            <div class="tags-input-container" id="tags-container">
-                <input type="text" id="tag-input" placeholder="add tags..." style="border:none; width: auto; flex-grow: 1; margin-top: 0;">
-            </div>
-        </div>
-        <button class="btn-main" onclick="savePost()">Publish Post</button>
-    </div>
+    </nav>
 
-    <!-- DM VIEW -->
-    <div id="dm-view">
-        <div id="friend-list" class="chat-list">
-            <!-- Friends list injected here -->
+    <div class="container">
+        <!-- FEED VIEW -->
+        <div id="feed-view">
+            <div id="posts-list">Loading posts...</div>
         </div>
-        <div id="active-chat" class="chat-window">
-            <div class="post-header">
-                <button onclick="backToFriends()" style="background:none; border:none; color:var(--primary); cursor:pointer;">&larr; Back</button>
-                <span id="chat-with-name">Friend</span>
-                <span></span>
+
+        <!-- CREATE POST VIEW -->
+        <div id="create-view">
+            <div style="background: white; padding: 20px; border: 1px solid var(--border);">
+                <h3>New Post</h3>
+                <textarea id="post-text" placeholder="Share some news or thoughts..."></textarea>
+                <input type="file" id="post-image" accept="image/*">
+                <input type="text" id="post-tags" placeholder="Tags (comma separated: news,tech,fun)">
+                <button class="btn" id="upload-btn" onclick="uploadPost()">Publish Online</button>
             </div>
-            <div class="messages" id="messages-box"></div>
-            <div class="chat-input-area">
-                <input type="text" id="message-input" placeholder="Type a message...">
-                <button onclick="sendMessage()" style="padding: 0 15px; background: none; border: none; color: var(--primary); font-weight: bold; cursor: pointer;">Send</button>
+        </div>
+
+        <!-- DM VIEW -->
+        <div id="dm-view">
+            <h3>Direct Messages</h3>
+            <p>Select a user to chat with (Click a name in feed)</p>
+            <div id="chat-container" class="hidden">
+                <h4 id="chatting-with">Chat</h4>
+                <div id="msg-box" style="height: 300px; overflow-y: auto; background: #eee; padding: 10px; margin-bottom: 10px;"></div>
+                <input type="text" id="msg-input" placeholder="Type message...">
+                <button class="btn" onclick="sendDM()">Send</button>
             </div>
         </div>
     </div>
-</div>
 
 <script>
-    // --- STATE MANAGEMENT ---
-    let posts = JSON.parse(localStorage.getItem('social_posts')) || [];
-    let messages = JSON.parse(localStorage.getItem('social_messages')) || {};
-    let currentTags = [];
-    let activeFriend = null;
+    // 1. REPLACE THIS WITH YOUR FIREBASE CONFIG
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_PROJECT.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT.appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
 
-    const friends = ["Alex Rivera", "Jordan Smith", "Casey Tech", "News Bot"];
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    const storage = firebase.storage();
 
-    // --- VIEW LOGIC ---
-    function showView(view) {
-        ['feed-view', 'create-view', 'dm-view'].forEach(v => document.getElementById(v).style.display = 'none');
-        ['btn-feed', 'btn-create', 'btn-dm'].forEach(b => document.getElementById(b).classList.remove('active'));
-        
-        document.getElementById(`${view}-view`).style.display = 'block';
-        document.getElementById(`btn-${view}`).classList.add('active');
+    let currentUser = null;
+    let activeChatFriend = null;
 
-        if (view === 'feed') renderPosts();
-        if (view === 'dm') renderFriends();
+    // --- AUTHENTICATION ---
+    function handleAuth(type) {
+        const email = document.getElementById('auth-email').value;
+        const pass = document.getElementById('auth-pass').value;
+        const errorEl = document.getElementById('auth-error');
+
+        if(type === 'signup') {
+            auth.createUserWithEmailAndPassword(email, pass).catch(e => errorEl.innerText = e.message);
+        } else {
+            auth.signInWithEmailAndPassword(email, pass).catch(e => errorEl.innerText = e.message);
+        }
     }
 
-    // --- POST LOGIC ---
-    // Handle Custom Tags
-    const tagInput = document.getElementById('tag-input');
-    tagInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && tagInput.value.trim() !== '') {
-            const tag = tagInput.value.trim().replace(/\s+/g, '');
-            if (!currentTags.includes(tag)) {
-                currentTags.push(tag);
-                renderTagPills();
-            }
-            tagInput.value = '';
+    auth.onAuthStateChanged(user => {
+        if (user) {
+            currentUser = user;
+            document.getElementById('auth-overlay').classList.add('hidden');
+            loadPosts();
+        } else {
+            document.getElementById('auth-overlay').classList.remove('hidden');
         }
     });
 
-    function renderTagPills() {
-        const container = document.getElementById('tags-container');
-        container.querySelectorAll('.tag-pill').forEach(el => el.remove());
-        currentTags.forEach(tag => {
-            const pill = document.createElement('div');
-            pill.className = 'tag-pill';
-            pill.innerHTML = `#${tag} <span onclick="removeTag('${tag}')">&times;</span>`;
-            container.insertBefore(pill, tagInput);
-        });
+    function logout() { auth.signOut(); location.reload(); }
+
+    // --- NAVIGATION ---
+    function showView(view) {
+        document.getElementById('feed-view').style.display = view === 'feed' ? 'block' : 'none';
+        document.getElementById('create-view').style.display = view === 'create' ? 'block' : 'none';
+        document.getElementById('dm-view').style.display = view === 'dm' ? 'block' : 'none';
     }
 
-    function removeTag(tag) {
-        currentTags = currentTags.filter(t => t !== tag);
-        renderTagPills();
-    }
-
-    // Save Post
-    async function savePost() {
+    // --- POSTS LOGIC ---
+    async function uploadPost() {
+        const btn = document.getElementById('upload-btn');
         const text = document.getElementById('post-text').value;
-        const category = document.getElementById('post-category').value;
-        const imageFile = document.getElementById('post-image').files[0];
+        const tags = document.getElementById('post-tags').value.split(',').map(t => t.trim());
+        const file = document.getElementById('post-image').files[0];
         
-        let imageData = '';
-        if (imageFile) {
-            imageData = await toBase64(imageFile);
+        if(!text) return alert("Please add text");
+        btn.disabled = true;
+        btn.innerText = "Uploading...";
+
+        let imageUrl = "";
+        if(file) {
+            const ref = storage.ref(`posts/${Date.now()}_${file.name}`);
+            await ref.put(file);
+            imageUrl = await ref.getDownloadURL();
         }
 
-        const newPost = {
-            id: Date.now(),
-            author: "Me",
-            category: category,
+        await db.collection('posts').add({
+            uid: currentUser.uid,
+            email: currentUser.email,
             text: text,
-            image: imageData,
-            tags: [...currentTags],
+            imageUrl: imageUrl,
+            tags: tags,
             views: 0,
-            timestamp: new Date().toLocaleString()
-        };
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
 
-        posts.unshift(newPost);
-        localStorage.setItem('social_posts', JSON.stringify(posts));
-        
-        // Reset and redirect
-        document.getElementById('post-text').value = '';
-        document.getElementById('post-image').value = '';
-        currentTags = [];
-        renderTagPills();
+        document.getElementById('post-text').value = "";
+        document.getElementById('post-tags').value = "";
+        btn.disabled = false;
+        btn.innerText = "Publish Online";
         showView('feed');
     }
 
-    function renderPosts() {
-        const container = document.getElementById('posts-container');
-        container.innerHTML = posts.length ? '' : '<p style="text-align:center; color:#888;">No posts yet. Be the first!</p>';
-        
-        posts.forEach(post => {
-            const postEl = document.createElement('div');
-            postEl.className = 'post';
-            postEl.onclick = () => incrementView(post.id);
-            
-            postEl.innerHTML = `
-                <div class="post-header">
-                    <span>@${post.author}</span>
-                    <span class="post-type">${post.category}</span>
-                </div>
-                ${post.image ? `<img src="${post.image}" class="post-img">` : ''}
-                <div class="post-content">
-                    <p>${post.text}</p>
-                </div>
-                <div class="tag-list">
-                    ${post.tags.map(t => `<span class="tag">#${t}</span>`).join('')}
-                </div>
-                <div class="post-footer">
-                    <span>${post.timestamp}</span>
-                    <span>${post.views} views</span>
-                </div>
-            `;
-            container.appendChild(postEl);
+    function loadPosts() {
+        db.collection('posts').orderBy('createdAt', 'desc').onSnapshot(snapshot => {
+            const list = document.getElementById('posts-list');
+            list.innerHTML = "";
+            snapshot.forEach(doc => {
+                const post = doc.data();
+                const div = document.createElement('div');
+                div.className = 'post';
+                div.innerHTML = `
+                    <div style="padding:10px; border-bottom:1px solid #eee; font-size:12px; display:flex; justify-content:space-between">
+                        <b onclick="startChat('${post.email}')" style="cursor:pointer; color:var(--primary)">${post.email}</b>
+                        <span class="views-count">${post.views || 0} views</span>
+                    </div>
+                    ${post.imageUrl ? `<img src="${post.imageUrl}" class="post-img" onclick="incrementView('${doc.id}', ${post.views || 0})">` : ''}
+                    <div class="post-content" onclick="incrementView('${doc.id}', ${post.views || 0})">
+                        <p>${post.text}</p>
+                        <div style="margin-top:10px">
+                            ${post.tags ? post.tags.map(t => `<span class="tag">#${t}</span>`).join('') : ''}
+                        </div>
+                    </div>
+                `;
+                list.appendChild(div);
+            });
         });
     }
 
-    function incrementView(postId) {
-        const post = posts.find(p => p.id === postId);
-        if (post) {
-            post.views++;
-            localStorage.setItem('social_posts', JSON.stringify(posts));
-            renderPosts();
-        }
+    function incrementView(postId, currentViews) {
+        db.collection('posts').doc(postId).update({ views: currentViews + 1 });
     }
 
     // --- DM LOGIC ---
-    function renderFriends() {
-        const list = document.getElementById('friend-list');
-        list.classList.remove('hidden');
-        document.getElementById('active-chat').style.display = 'none';
-        list.innerHTML = '';
-        
-        friends.forEach(f => {
-            const item = document.createElement('div');
-            item.className = 'friend-item';
-            item.innerHTML = `<span>${f}</span> <span>&rsaquo;</span>`;
-            item.onclick = () => openChat(f);
-            list.appendChild(item);
+    function startChat(friendEmail) {
+        if(friendEmail === currentUser.email) return;
+        activeChatFriend = friendEmail;
+        showView('dm');
+        document.getElementById('chat-container').classList.remove('hidden');
+        document.getElementById('chatting-with').innerText = "Chatting with: " + friendEmail;
+        loadMessages();
+    }
+
+    function sendDM() {
+        const text = document.getElementById('msg-input').value;
+        if(!text) return;
+
+        db.collection('messages').add({
+            sender: currentUser.email,
+            receiver: activeChatFriend,
+            text: text,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
+        document.getElementById('msg-input').value = "";
     }
 
-    function openChat(friendName) {
-        activeFriend = friendName;
-        document.getElementById('friend-list').classList.add('hidden');
-        document.getElementById('active-chat').style.display = 'flex';
-        document.getElementById('chat-with-name').innerText = friendName;
-        renderMessages();
-    }
-
-    function backToFriends() {
-        activeFriend = null;
-        renderFriends();
-    }
-
-    function sendMessage() {
-        const input = document.getElementById('message-input');
-        const text = input.value.trim();
-        if (!text) return;
-
-        if (!messages[activeFriend]) messages[activeFriend] = [];
-        
-        messages[activeFriend].push({ text, type: 'sent', time: new Date().toLocaleTimeString() });
-        
-        // Simple auto-reply simulation
-        setTimeout(() => {
-            messages[activeFriend].push({ 
-                text: `Thanks for the message! (Automatic reply from ${activeFriend})`, 
-                type: 'received', 
-                time: new Date().toLocaleTimeString() 
+    function loadMessages() {
+        db.collection('messages')
+            .orderBy('createdAt', 'asc')
+            .onSnapshot(snapshot => {
+                const box = document.getElementById('msg-box');
+                box.innerHTML = "";
+                snapshot.forEach(doc => {
+                    const m = doc.data();
+                    // Only show messages between the two users
+                    if((m.sender === currentUser.email && m.receiver === activeChatFriend) || 
+                       (m.sender === activeChatFriend && m.receiver === currentUser.email)) {
+                        const div = document.createElement('div');
+                        div.style.textAlign = m.sender === currentUser.email ? 'right' : 'left';
+                        div.innerHTML = `<p style="background:white; display:inline-block; padding:5px 10px; border-radius:10px; margin:2px;">
+                            <small style="display:block; font-size:8px;">${m.sender}</small>${m.text}</p>`;
+                        box.appendChild(div);
+                    }
+                });
+                box.scrollTop = box.scrollHeight;
             });
-            localStorage.setItem('social_messages', JSON.stringify(messages));
-            if (activeFriend) renderMessages();
-        }, 1000);
-
-        localStorage.setItem('social_messages', JSON.stringify(messages));
-        input.value = '';
-        renderMessages();
     }
-
-    function renderMessages() {
-        const box = document.getElementById('messages-box');
-        box.innerHTML = '';
-        const history = messages[activeFriend] || [];
-        history.forEach(m => {
-            const div = document.createElement('div');
-            div.className = `msg ${m.type}`;
-            div.innerText = m.text;
-            box.appendChild(div);
-        });
-        box.scrollTop = box.scrollHeight;
-    }
-
-    // --- UTILS ---
-    function toBase64(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = error => reject(error);
-        });
-    }
-
-    // Initial Load
-    renderPosts();
 </script>
-
 </body>
 </html>
