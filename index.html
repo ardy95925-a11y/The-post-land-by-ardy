@@ -11,7 +11,6 @@
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
 
-    <!-- Styles -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -32,9 +31,9 @@
     <nav>
         <div class="nav-brand" onclick="showView('feed')">Post Land</div>
         <div class="nav-links">
-            <button class="nav-btn" data-view="feed" onclick="showView('feed')">🏠 Home</button>
-            <button class="nav-btn" data-view="create" onclick="showView('create')">➕ Post</button>
-            <button class="nav-btn" data-view="dm" onclick="showView('dm')">✉️ DMs</button>
+            <button class="nav-btn" data-view="feed" onclick="showView('feed')">🏠</button>
+            <button class="nav-btn" data-view="create" onclick="showView('create')">➕</button>
+            <button class="nav-btn" data-view="dm" onclick="showView('dm')">✉️</button>
             <button class="nav-btn danger" onclick="logout()">Logout</button>
         </div>
     </nav>
@@ -44,7 +43,7 @@
         <!-- FEED -->
         <div id="feed-view">
             <div id="posts-list">
-                <div id="loading">Loading posts...</div>
+                <p style="text-align:center;color:#888;padding:40px;">Loading...</p>
             </div>
         </div>
 
@@ -52,9 +51,21 @@
         <div id="create-view">
             <div class="create-card">
                 <h3>New Post</h3>
-                <textarea id="post-text" placeholder="What's on your mind?"></textarea>
-                <input type="file" id="post-image" accept="image/*">
+                <div style="position:relative;">
+                    <textarea id="post-text" placeholder="What's on your mind?" maxlength="300"></textarea>
+                    <span id="char-counter" class="char-counter">0 / 300</span>
+                </div>
+
+                <!-- Image upload with preview -->
+                <div class="image-upload-area">
+                    <label for="post-image" class="image-upload-label">📷 Add Photo</label>
+                    <input type="file" id="post-image" accept="image/*">
+                    <button id="remove-image-btn" class="remove-img-btn hidden" onclick="removeImage()">✕ Remove</button>
+                </div>
+                <img id="image-preview" class="img-preview hidden" alt="Preview">
+
                 <input type="text" id="post-tags" placeholder="Tags: news, tech, fun">
+                <p id="upload-status" class="upload-status"></p>
                 <button class="btn" id="upload-btn" onclick="uploadPost()">Publish</button>
             </div>
         </div>
@@ -66,17 +77,15 @@
                     <h3>Direct Messages</h3>
                 </div>
 
-                <!-- Placeholder when no chat is open -->
                 <div id="dm-placeholder" class="dm-placeholder">
                     <div class="icon">✉️</div>
-                    <p>Tap a username on a post to start a chat</p>
+                    <p>Tap a username on a post to start a conversation</p>
                 </div>
 
-                <!-- Active chat -->
                 <div id="chat-container" class="hidden">
                     <div class="dm-header">
                         <button class="dm-back-btn" onclick="backToDMList()">← Back</button>
-                        <span id="chatting-with" style="font-weight:600; font-size:0.9rem;"></span>
+                        <span id="chatting-with" style="font-weight:600;font-size:0.9rem;"></span>
                         <div></div>
                     </div>
                     <div id="msg-box"></div>
@@ -90,7 +99,6 @@
 
     </div>
 
-    <!-- App Logic -->
     <script src="app.js"></script>
 </body>
 </html>
