@@ -1,18 +1,19 @@
+// ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
-    apiKey: "AIzaSyDHD8A6I7hqECe5mg1XBb39HcFIu0tyB4c",
-    authDomain: "social-globe.firebaseapp.com",
-    projectId: "social-globe",
-    storageBucket: "social-globe.firebasestorage.app",
+    apiKey:            "AIzaSyDHD8A6I7hqECe5mg1XBb39HcFIu0tyB4c",
+    authDomain:        "social-globe.firebaseapp.com",
+    projectId:         "social-globe",
+    storageBucket:     "social-globe.firebasestorage.app",
     messagingSenderId: "986186459032",
-    appId: "1:986186459032:web:6ab6ce3a2be54bcb04aded",
-    measurementId: "G-FP1CJH5KF5"
+    appId:             "1:986186459032:web:6ab6ce3a2be54bcb04aded",
+    measurementId:     "G-FP1CJH5KF5"
 };
-
 firebase.initializeApp(firebaseConfig);
 const auth    = firebase.auth();
 const db      = firebase.firestore();
 const storage = firebase.storage();
 
+// ── Global state ──────────────────────────────────────────────────────────────
 let currentUser      = null;
 let activeChatFriend = null;
 let messageListener  = null;
@@ -21,30 +22,56 @@ let typingTimeout    = null;
 
 const OWNER_EMAIL = 'oleksandr.lahoza.24@phcol.ie';
 
+// ── Profile cache (shared with profiles.js) ───────────────────────────────────
+window.profileCache = {};
+
+function getProfile(email) {
+    if (window.profileCache[email]) return Promise.resolve(window.profileCache[email]);
+    return db.collection('profiles').doc(email).get().then(doc => {
+        const data = doc.exists ? doc.data() : {};
+        window.profileCache[email] = data;
+        return data;
+    });
+}
+
+// Apply a profile pic to any avatar element
+function applyPic(el, email, picUrl) {
+    if (picUrl) {
+        el.style.backgroundImage    = `url(${picUrl})`;
+        el.style.backgroundSize     = 'cover';
+        el.style.backgroundPosition = 'center';
+        el.innerText = '';
+    } else {
+        el.style.backgroundImage = '';
+        el.innerText = (email || '?')[0].toUpperCase();
+    }
+}
+
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function handleAuth(type) {
     const email   = document.getElementById('auth-email').value.trim();
     const pass    = document.getElementById('auth-pass').value.trim();
     const errorEl = document.getElementById('auth-error');
-    if (!email || !pass) { errorEl.innerText = 'Please enter email and password.'; return; }
+    if (!email || !pass) { errorEl.innerText = 'Please fill in both fields.'; return; }
     errorEl.style.color = '#888';
-    errorEl.innerText   = type === 'signup' ? 'Creating account...' : 'Signing in...';
-    const action = type === 'signup'
+    errorEl.innerText   = type === 'signup' ? 'Creating account…' : 'Signing in…';
+    const p = type === 'signup'
         ? auth.createUserWithEmailAndPassword(email, pass)
         : auth.signInWithEmailAndPassword(email, pass);
-    action.catch(e => { errorEl.style.color = '#ef4444'; errorEl.innerText = e.message; });
+    p.catch(e => { errorEl.style.color = '#ef4444'; errorEl.innerText = e.message; });
 }
 
 auth.onAuthStateChanged(user => {
     if (user) {
         currentUser = user;
         document.getElementById('auth-overlay').style.display = 'none';
-        showView('feed');
-        loadPosts();
-        listenInbox();
         setOnlinePresence(user);
         initAdmin(user);
         loadAnnouncementBanner();
+        listenInbox();
+        showView('feed');
+        loadPosts();
+        refreshNavAvatar();
     } else {
         document.getElementById('auth-overlay').style.display = 'flex';
     }
@@ -56,61 +83,81 @@ function logout() { auth.signOut(); location.reload(); }
 function setOnlinePresence(user) {
     const ref = db.collection('presence').doc(user.uid);
     ref.set({ email: user.email, online: true, lastSeen: firebase.firestore.FieldValue.serverTimestamp() });
-    document.addEventListener('visibilitychange', () => {
-        ref.update({ online: !document.hidden, lastSeen: firebase.firestore.FieldValue.serverTimestamp() });
-    });
+    document.addEventListener('visibilitychange', () =>
+        ref.update({ online: !document.hidden, lastSeen: firebase.firestore.FieldValue.serverTimestamp() }));
     window.addEventListener('beforeunload', () => ref.update({ online: false }));
 }
 
+// ── NAV AVATAR ────────────────────────────────────────────────────────────────
+function refreshNavAvatar() {
+    if (!currentUser) return;
+    const el = document.getElementById('nav-avatar');
+    if (!el) return;
+    getProfile(currentUser.email).then(p => applyPic(el, currentUser.email, p.picUrl));
+}
+
+// Called by profiles.js after save
+window.onProfileSaved = function() {
+    refreshNavAvatar();
+    // Refresh create avatar too
+    const ca = document.getElementById('create-avatar-pic');
+    if (ca) getProfile(currentUser.email).then(p => applyPic(ca, currentUser.email, p.picUrl));
+};
+
 // ── NAVIGATION ────────────────────────────────────────────────────────────────
+const VIEWS = ['feed','create','dm','search','profile'];
+
 function showView(view) {
-    ['feed', 'create', 'dm', 'profile'].forEach(v => {
+    VIEWS.forEach(v => {
         document.getElementById(v + '-view').style.display = v === view ? 'block' : 'none';
     });
     document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.view === view);
     });
-    if (view === 'profile') loadProfile();
-    if (view !== 'dm') closeChatView();
+    if (view !== 'dm')      closeChatView();
+    if (view === 'profile') renderProfileView();
+    if (view === 'create')  refreshCreateAvatar();
+    if (view === 'search')  document.getElementById('search-input')?.focus();
 }
 
-// ── CHAR COUNTER ──────────────────────────────────────────────────────────────
-document.getElementById('post-text').addEventListener('input', function () {
-    const remaining = 300 - this.value.length;
-    const counter   = document.getElementById('char-counter');
-    counter.innerText   = remaining;
-    counter.style.color = remaining < 20 ? '#ef4444' : '#94a3b8';
-});
-
-function focusTags() {
-    const t = document.getElementById('post-tags');
-    t.classList.remove('hidden');
-    t.focus();
+function refreshCreateAvatar() {
+    if (!currentUser) return;
+    const ca = document.getElementById('create-avatar-pic');
+    if (!ca) return;
+    getProfile(currentUser.email).then(p => applyPic(ca, currentUser.email, p.picUrl));
 }
 
 // ── IMAGE COMPRESSION ─────────────────────────────────────────────────────────
-function compressImage(file, maxWidth, quality) {
+function compressImage(file, maxW, quality) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onerror = () => reject(new Error('Could not read file'));
-        reader.onload = e => {
+        reader.onerror = () => reject(new Error('Read failed'));
+        reader.onload  = e => {
             const img = new Image();
-            img.onerror = () => reject(new Error('Could not decode image'));
-            img.onload = () => {
+            img.onerror = () => reject(new Error('Decode failed'));
+            img.onload  = () => {
                 let w = img.width, h = img.height;
-                if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', quality);
-                const kb      = Math.round((dataUrl.length * 3) / 4 / 1024);
-                resolve(kb > 950 ? canvas.toDataURL('image/jpeg', 0.5) : dataUrl);
+                if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+                const c = document.createElement('canvas');
+                c.width = w; c.height = h;
+                c.getContext('2d').drawImage(img, 0, 0, w, h);
+                const url = c.toDataURL('image/jpeg', quality);
+                const kb  = Math.round(url.length * 3 / 4 / 1024);
+                resolve(kb > 950 ? c.toDataURL('image/jpeg', 0.5) : url);
             };
             img.src = e.target.result;
         };
         reader.readAsDataURL(file);
     });
 }
+
+// ── CREATE POST ───────────────────────────────────────────────────────────────
+document.getElementById('post-text').addEventListener('input', function () {
+    const left = 300 - this.value.length;
+    const el   = document.getElementById('char-counter');
+    el.innerText   = left;
+    el.style.color = left < 20 ? '#ef4444' : '#94a3b8';
+});
 
 document.getElementById('post-image').addEventListener('change', function () {
     const file = this.files[0]; if (!file) return;
@@ -128,172 +175,137 @@ function removeImage() {
     document.getElementById('image-preview').src = '';
 }
 
-// ── UPLOAD POST ───────────────────────────────────────────────────────────────
 async function uploadPost() {
-    const btn      = document.getElementById('upload-btn');
-    const statusEl = document.getElementById('upload-status');
-    const textEl   = document.getElementById('post-text');
-    const tagsEl   = document.getElementById('post-tags');
-    const imageEl  = document.getElementById('post-image');
-    const text     = textEl ? textEl.value.trim() : '';
-    const file     = imageEl && imageEl.files.length > 0 ? imageEl.files[0] : null;
+    const btn    = document.getElementById('upload-btn');
+    const status = document.getElementById('upload-status');
+    const text   = document.getElementById('post-text').value.trim();
+    const tagsEl = document.getElementById('post-tags');
+    const imgEl  = document.getElementById('post-image');
+    const file   = imgEl && imgEl.files.length ? imgEl.files[0] : null;
 
-    let tags = [];
-    if (tagsEl && tagsEl.value.trim()) {
-        tags = tagsEl.value.split(',')
-            .map(t => t.trim().replace(/[^a-zA-Z0-9]/g, ''))
-            .filter(t => t.length > 0).slice(0, 10);
-    }
+    const tags = tagsEl && tagsEl.value.trim()
+        ? tagsEl.value.split(',').map(t => t.trim().replace(/[^a-zA-Z0-9]/g,'')).filter(Boolean).slice(0,10)
+        : [];
 
-    const setStatus = (msg, color) => {
-        if (statusEl) { statusEl.innerText = msg; statusEl.style.color = color || '#94a3b8'; }
-    };
+    const st = (msg, col) => { if(status){status.innerText=msg;status.style.color=col||'#94a3b8';} };
 
-    if (!text) { setStatus('Please write something!', '#ef4444'); return; }
-    btn.disabled = true; btn.innerText = 'Publishing...';
+    if (!text) { st('Please write something!','#ef4444'); return; }
+    btn.disabled = true; btn.innerText = 'Posting…';
 
     try {
         let imageDataUrl = '';
-        if (file) {
-            setStatus('Processing image...', '#94a3b8');
-            imageDataUrl = await compressImage(file, 800, 0.75);
-            setStatus('Saving...', '#94a3b8');
-        }
+        if (file) { st('Processing image…'); imageDataUrl = await compressImage(file, 800, 0.75); }
+
         await db.collection('posts').add({
             uid: currentUser.uid, email: currentUser.email,
             text, imageDataUrl, imageUrl: '',
-            tags, views: 0, likes: 0, likedBy: [],
+            tags, views: 0, likes: 0, likedBy: [], bookmarks: [],
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
-        if (textEl)  textEl.value  = '';
-        if (tagsEl)  { tagsEl.value = ''; tagsEl.classList.add('hidden'); }
-        if (imageEl) imageEl.value = '';
+
+        document.getElementById('post-text').value = '';
+        if (tagsEl) tagsEl.value = '';
+        if (imgEl)  imgEl.value  = '';
         document.getElementById('char-counter').innerText = '300';
         removeImage();
-        setStatus('✓ Posted!', '#22c55e');
-        setTimeout(() => { setStatus('', ''); showView('feed'); }, 800);
-    } catch (err) {
-        setStatus('Failed: ' + err.message, '#ef4444');
-    }
+        st('✓ Posted!','#22c55e');
+        setTimeout(() => { st(''); showView('feed'); }, 800);
+    } catch(e) { st('Failed: '+e.message,'#ef4444'); }
 
-    btn.disabled = false; btn.innerText = 'Publish';
+    btn.disabled = false; btn.innerText = 'Post';
 }
 
-// ── TIME AGO ──────────────────────────────────────────────────────────────────
+// ── TIME ──────────────────────────────────────────────────────────────────────
 function timeAgo(ts) {
     if (!ts) return '';
     const s = Math.floor((Date.now() - ts.toMillis()) / 1000);
     if (s < 60)     return 'just now';
-    if (s < 3600)   return Math.floor(s / 60)    + 'm ago';
-    if (s < 86400)  return Math.floor(s / 3600)  + 'h ago';
-    if (s < 604800) return Math.floor(s / 86400) + 'd ago';
+    if (s < 3600)   return Math.floor(s/60)    + 'm ago';
+    if (s < 86400)  return Math.floor(s/3600)  + 'h ago';
+    if (s < 604800) return Math.floor(s/86400) + 'd ago';
     return new Date(ts.toMillis()).toLocaleDateString();
-}
-
-// ── RENDER AVATAR (used by posts + profile) ───────────────────────────────────
-// Returns either an <img> tag if user has a profile pic, or a coloured initial
-function renderAvatarEl(email, size, picUrl) {
-    const el = document.createElement('div');
-    el.className = 'avatar post-avatar';
-    el.style.width = size + 'px';
-    el.style.height = size + 'px';
-    el.style.fontSize = (size * 0.38) + 'px';
-    if (picUrl) {
-        el.style.backgroundImage = `url(${picUrl})`;
-        el.style.backgroundSize = 'cover';
-        el.style.backgroundPosition = 'center';
-        el.style.backgroundRepeat = 'no-repeat';
-    } else {
-        el.innerText = (email || '?')[0].toUpperCase();
-    }
-    return el;
-}
-
-// Cache of profile data so we don't spam Firestore
-const profileCache = {};
-
-function getProfile(email) {
-    if (profileCache[email]) return Promise.resolve(profileCache[email]);
-    return db.collection('profiles').doc(email).get().then(doc => {
-        const data = doc.exists ? doc.data() : {};
-        profileCache[email] = data;
-        return data;
-    });
 }
 
 // ── LOAD POSTS ────────────────────────────────────────────────────────────────
 function loadPosts() {
-    db.collection('posts').orderBy('createdAt', 'desc').onSnapshot(snap => {
+    db.collection('posts').orderBy('createdAt','desc').onSnapshot(snap => {
         const list = document.getElementById('posts-list');
         list.innerHTML = '';
+
         if (snap.empty) {
-            list.innerHTML = `<div class="empty-state"><div class="empty-icon">🌍</div><p>No posts yet.<br>Be the first to share something!</p></div>`;
+            list.innerHTML = `<div class="empty-state"><div class="ei">🌍</div><p>No posts yet.<br>Be the first to share something!</p></div>`;
             return;
         }
-        snap.forEach(doc => {
-            const post     = doc.data();
-            const isOwn    = post.uid === currentUser.uid;
-            const likedBy  = post.likedBy || [];
-            const hasLiked = likedBy.includes(currentUser.uid);
-            const imgSrc   = post.imageDataUrl || post.imageUrl || '';
-            const isOwner  = post.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
 
-            const div = document.createElement('div');
-            div.className = 'post';
+        snap.forEach(doc => buildPostCard(doc, list));
+    });
+}
 
-            // Build post shell first, then hydrate avatar async
-            div.innerHTML = `
-                <div class="post-header">
-                    <div class="post-avatar-wrap" id="pav-${doc.id}"></div>
-                    <div class="post-header-info">
-                        <div class="post-author ${isOwn ? '' : 'clickable'}"
-                             onclick="${isOwn ? '' : `startChat('${post.email}')`}">
-                            ${post.email}
-                            ${isOwner ? '<span class="owner-badge">👑 Owner</span>' : ''}
-                            <span class="admin-badge-placeholder" data-email="${post.email}"></span>
-                            ${isOwn ? '<span style="font-size:0.7rem;color:#94a3b8;font-weight:400;margin-left:4px">(you)</span>' : ''}
-                        </div>
-                        <div class="post-time">${timeAgo(post.createdAt)}</div>
-                    </div>
+function buildPostCard(doc, container) {
+    const post      = doc.data();
+    const isOwn     = post.uid === currentUser.uid;
+    const likedBy   = post.likedBy   || [];
+    const bookmarks = post.bookmarks  || [];
+    const hasLiked  = likedBy.includes(currentUser.uid);
+    const hasBookmarked = bookmarks.includes(currentUser.uid);
+    const imgSrc    = post.imageDataUrl || post.imageUrl || '';
+    const isOwner   = post.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+
+    const div = document.createElement('div');
+    div.className = 'post';
+    div.dataset.postId = doc.id;
+
+    div.innerHTML = `
+        <div class="post-header">
+            <div class="post-avatar" id="pav-${doc.id}"></div>
+            <div class="post-header-info">
+                <div class="post-author ${isOwn?'':'clickable'}" onclick="${isOwn?'':'openUserProfile(\''+post.email+'\')'}">
+                    <span id="pname-${doc.id}">${post.email}</span>
+                    ${isOwner ? '<span class="owner-badge">👑 Owner</span>' : ''}
+                    <span class="badge-slot" data-email="${post.email}"></span>
+                    ${isOwn ? '<span style="font-size:.68rem;color:#94a3b8;font-weight:400">(you)</span>' : ''}
                 </div>
-                ${imgSrc ? `<img src="${imgSrc}" class="post-img" loading="lazy">` : ''}
-                <div class="post-content">
-                    <p class="post-text">${post.text}</p>
-                    ${post.tags && post.tags.length ? `<div class="post-tags">${post.tags.map(t => `<span class="tag">#${t}</span>`).join('')}</div>` : ''}
-                </div>
-                <div class="post-stats">
-                    <span class="post-stat">❤️ ${post.likes || 0} likes</span>
-                    <span class="post-stat">👁 ${post.views || 0} views</span>
-                </div>
-                <div class="post-actions">
-                    <button class="action-btn ${hasLiked ? 'liked' : ''}" onclick="toggleLike('${doc.id}', ${hasLiked})">
-                        ${hasLiked ? '❤️' : '🤍'} Like
-                    </button>
-                    <button class="action-btn" onclick="incrementView('${doc.id}')">👁 View</button>
-                    ${!isOwn ? `<button class="action-btn" onclick="startChat('${post.email}')">✉️ Message</button>` : ''}
-                    ${isOwn  ? `<button class="action-btn delete-btn" onclick="deletePost('${doc.id}')">🗑 Delete</button>` : ''}
-                </div>`;
+                <div class="post-time">${timeAgo(post.createdAt)}</div>
+            </div>
+        </div>
+        ${imgSrc ? `<img src="${imgSrc}" class="post-img" loading="lazy" onclick="viewImage(this.src)">` : ''}
+        <div class="post-content">
+            <p class="post-text">${escHtml(post.text)}</p>
+            ${post.tags && post.tags.length ? `<div class="post-tags">${post.tags.map(t=>`<span class="tag" onclick="searchByTag('${t}')">#${t}</span>`).join('')}</div>` : ''}
+        </div>
+        <div class="post-stats">
+            <span class="post-stat">❤️ ${post.likes||0}</span>
+            <span class="post-stat">👁 ${post.views||0}</span>
+            <span class="post-stat">🔖 ${bookmarks.length}</span>
+        </div>
+        <div class="post-actions">
+            <button class="action-btn ${hasLiked?'liked':''}" onclick="toggleLike('${doc.id}',${hasLiked})">
+                ${hasLiked?'❤️':'🤍'} Like
+            </button>
+            <button class="action-btn" onclick="incrementView('${doc.id}')">👁 View</button>
+            <button class="action-btn ${hasBookmarked?'bookmarked':''}" onclick="toggleBookmark('${doc.id}',${hasBookmarked})">
+                ${hasBookmarked?'🔖':'🔖'} ${hasBookmarked?'Saved':'Save'}
+            </button>
+            ${!isOwn ? `<button class="action-btn" onclick="startChat('${post.email}')">✉️ Msg</button>` : ''}
+            ${isOwn  ? `<button class="action-btn delete-btn" onclick="deletePost('${doc.id}')">🗑</button>` : ''}
+        </div>`;
 
-            list.appendChild(div);
+    container.appendChild(div);
 
-            // Async: load profile pic + admin badge
-            getProfile(post.email).then(profile => {
-                const wrap = div.querySelector(`#pav-${doc.id}`);
-                if (wrap) {
-                    const avatarEl = renderAvatarEl(post.email, 38, profile.picUrl || '');
-                    wrap.appendChild(avatarEl);
-                }
-                // Admin badge
-                if (!isOwner) {
-                    db.collection('admins').doc(post.email).get().then(adoc => {
-                        const placeholder = div.querySelector(`.admin-badge-placeholder[data-email="${post.email}"]`);
-                        if (adoc.exists && placeholder) {
-                            placeholder.outerHTML = '<span class="admin-badge">🛡 Admin</span>';
-                        }
-                    });
-                }
+    // Async: load avatar + display name + admin badge
+    getProfile(post.email).then(profile => {
+        const av = div.querySelector(`#pav-${doc.id}`);
+        if (av) applyPic(av, post.email, profile.picUrl);
+
+        const nm = div.querySelector(`#pname-${doc.id}`);
+        if (nm && profile.displayName) nm.innerText = profile.displayName;
+
+        if (!isOwner) {
+            db.collection('admins').doc(post.email).get().then(adoc => {
+                const slot = div.querySelector(`.badge-slot[data-email="${post.email}"]`);
+                if (adoc.exists && slot) slot.outerHTML = '<span class="admin-badge">🛡 Admin</span>';
             });
-        });
+        }
     });
 }
 
@@ -310,182 +322,311 @@ function toggleLike(id, hasLiked) {
     }
 }
 
+function toggleBookmark(id, hasBookmarked) {
+    const ref = db.collection('posts').doc(id);
+    if (hasBookmarked) {
+        ref.update({ bookmarks: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+    } else {
+        ref.update({ bookmarks: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+    }
+}
+
 async function deletePost(id) {
     if (!confirm('Delete this post?')) return;
     try { await db.collection('posts').doc(id).delete(); }
-    catch (e) { alert('Could not delete: ' + e.message); }
+    catch(e) { alert('Could not delete: '+e.message); }
 }
 
-// ── PROFILE VIEW ──────────────────────────────────────────────────────────────
-function loadProfile() {
-    const email = currentUser.email;
-    document.getElementById('profile-email').innerText = email;
+// ── SEARCH ────────────────────────────────────────────────────────────────────
+let searchTimeout = null;
 
-    // Load profile data (populated by profiles.js)
-    getProfile(email).then(profile => {
-        const bigAv = document.getElementById('profile-avatar-big');
-        if (bigAv) {
-            if (profile.picUrl) {
-                bigAv.style.backgroundImage = `url(${profile.picUrl})`;
-                bigAv.style.backgroundSize  = 'cover';
-                bigAv.style.backgroundPosition = 'center';
-                bigAv.innerText = '';
-            } else {
-                bigAv.innerText = email[0].toUpperCase();
-            }
-        }
-        const nameEl = document.getElementById('profile-display-name');
-        if (nameEl) nameEl.innerText = profile.displayName || '';
-        const bioEl = document.getElementById('profile-bio-display');
-        if (bioEl) bioEl.innerText = profile.bio || '';
-    });
+function runSearch(query) {
+    clearTimeout(searchTimeout);
+    const q = query.trim().toLowerCase();
+    const el = document.getElementById('search-results');
+    if (!q) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="loading-state">Searching…</div>';
+    searchTimeout = setTimeout(() => doSearch(q, el), 350);
+}
 
-    db.collection('posts').where('uid', '==', currentUser.uid).get().then(snap => {
-        let totalLikes = 0, totalViews = 0;
-        const posts = [];
+function doSearch(q, el) {
+    el.innerHTML = '';
+    // Search posts
+    db.collection('posts').orderBy('createdAt','desc').get().then(snap => {
+        const postResults = [];
+        const peopleMap   = {};
         snap.forEach(doc => {
             const d = doc.data();
-            totalLikes += d.likes || 0;
-            totalViews += d.views || 0;
-            posts.push(d);
+            if ((d.text||'').toLowerCase().includes(q) ||
+                (d.email||'').toLowerCase().includes(q) ||
+                (d.tags||[]).some(t => t.toLowerCase().includes(q))) {
+                postResults.push({ id: doc.id, ...d });
+            }
+            if ((d.email||'').toLowerCase().includes(q)) peopleMap[d.email] = d.email;
         });
-        document.getElementById('profile-stats').innerHTML = `
-            <div class="profile-stat"><div class="profile-stat-num">${snap.size}</div><div class="profile-stat-label">Posts</div></div>
-            <div class="profile-stat"><div class="profile-stat-num">${totalLikes}</div><div class="profile-stat-label">Likes</div></div>
-            <div class="profile-stat"><div class="profile-stat-num">${totalViews}</div><div class="profile-stat-label">Views</div></div>
-        `;
-        const postsEl = document.getElementById('profile-posts');
-        if (!posts.length) { postsEl.innerHTML = ''; return; }
-        postsEl.innerHTML = '<h4>Your Posts</h4>' + posts.slice(0, 5).map(p =>
-            `<div class="profile-mini-post">${p.text ? p.text.substring(0, 80) + (p.text.length > 80 ? '…' : '') : ''}</div>`
-        ).join('');
+
+        if (!postResults.length && !Object.keys(peopleMap).length) {
+            el.innerHTML = '<div class="empty-state"><div class="ei">🔍</div><p>No results for "'+escHtml(q)+'"</p></div>';
+            return;
+        }
+
+        // People section
+        const people = Object.keys(peopleMap);
+        if (people.length) {
+            const sec = document.createElement('div');
+            sec.innerHTML = `<div class="search-section-title">People</div>`;
+            people.slice(0,5).forEach(email => {
+                getProfile(email).then(profile => {
+                    const row = document.createElement('div');
+                    row.className = 'search-person-row';
+                    row.onclick   = () => openUserProfile(email);
+                    row.innerHTML = `
+                        <div class="search-person-av" id="sav-${email.replace(/[^a-z0-9]/gi,'_')}"></div>
+                        <div class="search-person-info">
+                            <div class="search-person-name">${profile.displayName || email}</div>
+                            <div class="search-person-email">${email}</div>
+                        </div>`;
+                    sec.appendChild(row);
+                    const av = row.querySelector(`#sav-${email.replace(/[^a-z0-9]/gi,'_')}`);
+                    if (av) applyPic(av, email, profile.picUrl);
+                });
+            });
+            el.appendChild(sec);
+        }
+
+        // Posts section
+        if (postResults.length) {
+            const sec = document.createElement('div');
+            sec.innerHTML = `<div class="search-section-title" style="margin-top:14px">Posts</div>`;
+            postResults.slice(0,10).forEach(post => {
+                const fakeDoc = { id: post.id, data: () => post };
+                buildPostCard(fakeDoc, sec);
+            });
+            el.appendChild(sec);
+        }
     });
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// DM SYSTEM
-// ══════════════════════════════════════════════════════════════════════════════
-function getChatId(a, b) { return [a, b].sort().join('__'); }
+function searchByTag(tag) {
+    showView('search');
+    const input = document.getElementById('search-input');
+    if (input) { input.value = tag; runSearch(tag); }
+}
 
+// ── USER PROFILE MODAL ────────────────────────────────────────────────────────
+function openUserProfile(email) {
+    if (email === currentUser.email) { showView('profile'); return; }
+
+    const modal = document.createElement('div');
+    modal.id = 'user-profile-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:5500;display:flex;align-items:flex-end;justify-content:center;font-family:Inter,sans-serif;';
+    modal.innerHTML = `
+        <div style="background:white;border-radius:20px 20px 0 0;width:100%;max-width:480px;padding:22px 20px 34px;box-shadow:0 -8px 40px rgba(0,0,0,.2);animation:slideUp .22s ease;max-height:80vh;overflow-y:auto;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+                <h3 style="font-size:1rem;font-weight:700">Profile</h3>
+                <button onclick="document.getElementById('user-profile-modal').remove()" style="background:#f1f5f9;border:none;border-radius:8px;width:30px;height:30px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
+                <div id="upm-av" style="width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:white;font-weight:700;font-size:1.2rem;display:flex;align-items:center;justify-content:center;text-transform:uppercase;flex-shrink:0;background-size:cover;background-position:center;overflow:hidden;"></div>
+                <div>
+                    <div id="upm-name" style="font-weight:700;font-size:1rem;"></div>
+                    <div id="upm-email" style="font-size:.76rem;color:#94a3b8;margin-top:2px;"></div>
+                </div>
+            </div>
+            <div id="upm-bio" style="font-size:.87rem;color:#475569;line-height:1.5;margin-bottom:16px;white-space:pre-wrap;"></div>
+            <div id="upm-stats" style="display:flex;gap:12px;margin-bottom:16px;"></div>
+            <button onclick="startChat('${email}');document.getElementById('user-profile-modal').remove()" style="background:#3b82f6;color:white;border:none;width:100%;padding:11px;border-radius:10px;font-weight:600;font-size:.93rem;cursor:pointer;font-family:inherit;">✉️ Send Message</button>
+        </div>`;
+
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+    // Load profile
+    getProfile(email).then(p => {
+        const av = document.getElementById('upm-av');
+        applyPic(av, email, p.picUrl);
+        document.getElementById('upm-name').innerText  = p.displayName || email;
+        document.getElementById('upm-email').innerText = email;
+        document.getElementById('upm-bio').innerText   = p.bio || '';
+    });
+
+    // Load stats
+    db.collection('posts').where('email','==',email).get().then(snap => {
+        let likes = 0; snap.forEach(d => likes += d.data().likes||0);
+        const st = document.getElementById('upm-stats');
+        st.innerHTML = `
+            <div style="background:#f1f5f9;border-radius:9px;padding:10px 16px;text-align:center;flex:1"><div style="font-size:1.1rem;font-weight:700;color:#3b82f6">${snap.size}</div><div style="font-size:.68rem;color:#94a3b8;text-transform:uppercase;margin-top:2px">Posts</div></div>
+            <div style="background:#f1f5f9;border-radius:9px;padding:10px 16px;text-align:center;flex:1"><div style="font-size:1.1rem;font-weight:700;color:#3b82f6">${likes}</div><div style="font-size:.68rem;color:#94a3b8;text-transform:uppercase;margin-top:2px">Likes</div></div>`;
+    });
+}
+
+// ── PROFILE VIEW (your own) ───────────────────────────────────────────────────
+function renderProfileView() {
+    // profiles.js takes over rendering — we just provide the data hooks
+    if (typeof window.renderOwnProfile === 'function') {
+        window.renderOwnProfile();
+    }
+}
+
+// ── DM SYSTEM ─────────────────────────────────────────────────────────────────
+function getChatId(a,b) { return [a,b].sort().join('__'); }
+
+// New message modal — lets you start a chat with anyone who's posted
+function showNewMessageModal() {
+    if (document.getElementById('new-msg-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'new-msg-modal';
+    modal.innerHTML = `
+        <div class="new-msg-sheet">
+            <div class="edit-header" style="margin-bottom:14px">
+                <h3 style="font-size:1rem;font-weight:700">New Message</h3>
+                <button class="edit-close" onclick="document.getElementById('new-msg-modal').remove()">✕</button>
+            </div>
+            <input class="new-msg-search" placeholder="Search people…" oninput="searchNewMsg(this.value)" autofocus>
+            <div id="new-msg-list"><div class="loading-state">Loading…</div></div>
+        </div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
+    loadNewMsgList('');
+}
+
+function searchNewMsg(q) { loadNewMsgList(q.toLowerCase()); }
+
+function loadNewMsgList(q) {
+    const list = document.getElementById('new-msg-list');
+    if (!list) return;
+    db.collection('posts').get().then(snap => {
+        const seen = new Set();
+        const people = [];
+        snap.forEach(doc => {
+            const d = doc.data();
+            if (d.email !== currentUser.email && !seen.has(d.email)) {
+                if (!q || d.email.toLowerCase().includes(q)) {
+                    seen.add(d.email);
+                    people.push(d.email);
+                }
+            }
+        });
+        if (!people.length) { list.innerHTML = '<div class="empty-state" style="padding:20px"><p>No people found</p></div>'; return; }
+        list.innerHTML = '';
+        people.slice(0,20).forEach(email => {
+            getProfile(email).then(profile => {
+                const row = document.createElement('div');
+                row.className = 'new-msg-person';
+                row.onclick   = () => { document.getElementById('new-msg-modal').remove(); startChat(email); };
+                row.innerHTML = `
+                    <div class="new-msg-av" id="nma-${email.replace(/[^a-z0-9]/gi,'_')}"></div>
+                    <div><div class="new-msg-name">${profile.displayName||email}</div><div class="new-msg-email">${email}</div></div>`;
+                list.appendChild(row);
+                const av = row.querySelector(`#nma-${email.replace(/[^a-z0-9]/gi,'_')}`);
+                if (av) applyPic(av, email, profile.picUrl);
+            });
+        });
+    });
+}
+
+// Inbox
 function listenInbox() {
     if (inboxListener) { inboxListener(); inboxListener = null; }
     inboxListener = db.collection('conversations')
-        .where('members', 'array-contains', currentUser.email)
-        .orderBy('lastAt', 'desc')
+        .where('members','array-contains',currentUser.email)
+        .orderBy('lastAt','desc')
         .onSnapshot(snap => {
-            const inboxEl = document.getElementById('inbox-list');
-            if (!inboxEl) return;
+            const el = document.getElementById('inbox-list');
+            if (!el) return;
             if (snap.empty) {
-                inboxEl.innerHTML = `<div class="inbox-list-empty"><div class="icon">💬</div><p>No messages yet.<br>Tap a name on a post to start chatting.</p></div>`;
+                el.innerHTML = `<div class="inbox-empty"><div class="ei">💬</div><p>No messages yet.<br>Start a conversation from a post or use the + button.</p></div>`;
                 updateUnreadBadge(0); return;
             }
             let totalUnread = 0;
-            inboxEl.innerHTML = '';
+            el.innerHTML = '';
             snap.forEach(doc => {
-                const c       = doc.data();
-                const other   = (c.members || []).find(m => m !== currentUser.email) || '';
-                const unread  = (c.unread && c.unread[currentUser.email]) || 0;
-                const preview = c.lastText || '';
-                const time    = c.lastAt ? timeAgo(c.lastAt) : '';
-                totalUnread  += unread;
+                const c      = doc.data();
+                const other  = (c.members||[]).find(m=>m!==currentUser.email)||'';
+                const unread = (c.unread&&c.unread[currentUser.email])||0;
+                totalUnread += unread;
 
                 const item = document.createElement('div');
-                item.className = 'inbox-item' + (unread > 0 ? ' has-unread' : '');
+                item.className = 'inbox-item'+(unread>0?' has-unread':'');
                 item.onclick   = () => openChat(other);
 
-                // Avatar area — will be hydrated with profile pic if available
-                const avatarDiv = document.createElement('div');
-                avatarDiv.className = 'inbox-avatar';
-                avatarDiv.innerText = other[0] ? other[0].toUpperCase() : '?';
+                const av = document.createElement('div');
+                av.className = 'inbox-avatar';
+                av.innerText = other[0]?.toUpperCase()||'?';
+                getProfile(other).then(p => applyPic(av, other, p.picUrl));
+                item.appendChild(av);
 
-                getProfile(other).then(profile => {
-                    if (profile.picUrl) {
-                        avatarDiv.style.backgroundImage = `url(${profile.picUrl})`;
-                        avatarDiv.style.backgroundSize = 'cover';
-                        avatarDiv.style.backgroundPosition = 'center';
-                        avatarDiv.innerText = '';
-                    }
-                });
-
-                item.appendChild(avatarDiv);
-                item.insertAdjacentHTML('beforeend', `
+                const preview = c.lastText||'';
+                const mine    = c.lastSender===currentUser.email;
+                item.insertAdjacentHTML('beforeend',`
                     <div class="inbox-info">
-                        <div class="inbox-name">${other}</div>
-                        <div class="inbox-preview">${preview ? (c.lastSender === currentUser.email ? 'You: ' : '') + preview : 'Tap to chat'}</div>
+                        <div class="inbox-name" id="inb-n-${doc.id}">${other}</div>
+                        <div class="inbox-preview">${preview?(mine?'You: ':'')+preview:'Tap to chat'}</div>
                     </div>
                     <div class="inbox-right">
-                        <div class="inbox-time">${time}</div>
-                        ${unread > 0 ? `<div class="inbox-unread-dot">${unread}</div>` : ''}
+                        <div class="inbox-time">${c.lastAt?timeAgo(c.lastAt):''}</div>
+                        ${unread>0?`<div class="inbox-unread-dot">${unread}</div>`:''}
                     </div>`);
-                inboxEl.appendChild(item);
+
+                // Display name
+                getProfile(other).then(p => {
+                    const nm = item.querySelector(`#inb-n-${doc.id}`);
+                    if (nm && p.displayName) nm.innerText = p.displayName;
+                });
+
+                el.appendChild(item);
             });
             updateUnreadBadge(totalUnread);
-            const countEl = document.getElementById('inbox-count');
-            if (countEl) {
-                countEl.innerText = snap.size + ' chat' + (snap.size !== 1 ? 's' : '');
-                countEl.classList.toggle('hidden', snap.size === 0);
-            }
-        }, () => loadInboxFallback());
-}
-
-function loadInboxFallback() {
-    db.collection('conversations').where('members', 'array-contains', currentUser.email).get().then(snap => {
-        const inboxEl = document.getElementById('inbox-list');
-        if (!inboxEl || snap.empty) return;
-        inboxEl.innerHTML = '';
-        snap.forEach(doc => {
-            const c = doc.data();
-            const other = (c.members || []).find(m => m !== currentUser.email) || '';
-            const item = document.createElement('div');
-            item.className = 'inbox-item';
-            item.onclick   = () => openChat(other);
-            item.innerHTML = `<div class="inbox-avatar">${other[0]?.toUpperCase() || '?'}</div>
-                <div class="inbox-info"><div class="inbox-name">${other}</div>
-                <div class="inbox-preview">${c.lastText || 'Tap to chat'}</div></div>`;
-            inboxEl.appendChild(item);
+        }, () => {
+            // Index not ready — fallback
+            db.collection('conversations').where('members','array-contains',currentUser.email).get()
+                .then(snap => {
+                    const el = document.getElementById('inbox-list'); if(!el) return;
+                    el.innerHTML='';
+                    snap.forEach(doc => {
+                        const c=doc.data(), other=(c.members||[]).find(m=>m!==currentUser.email)||'';
+                        const item=document.createElement('div'); item.className='inbox-item'; item.onclick=()=>openChat(other);
+                        item.innerHTML=`<div class="inbox-avatar">${other[0]?.toUpperCase()||'?'}</div><div class="inbox-info"><div class="inbox-name">${other}</div><div class="inbox-preview">${c.lastText||'Tap to chat'}</div></div>`;
+                        el.appendChild(item);
+                    });
+                });
         });
-    });
 }
 
-function updateUnreadBadge(count) {
-    const badge = document.getElementById('unread-badge');
-    if (!badge) return;
-    badge.innerText = count > 9 ? '9+' : count;
-    badge.classList.toggle('hidden', count === 0);
+function updateUnreadBadge(n) {
+    const b = document.getElementById('unread-badge'); if(!b) return;
+    b.innerText = n>9?'9+':n;
+    b.classList.toggle('hidden',n===0);
 }
 
 function openChat(friendEmail) {
-    if (!friendEmail || friendEmail === currentUser.email) return;
+    if (!friendEmail||friendEmail===currentUser.email) return;
     activeChatFriend = friendEmail;
     document.getElementById('dm-inbox-view').classList.add('hidden');
     document.getElementById('dm-chat-view').classList.remove('hidden');
 
-    // Topbar — try to show profile pic
+    // Topbar
     const topAv = document.getElementById('chat-topbar-avatar');
-    topAv.innerText = friendEmail[0].toUpperCase();
-    topAv.style.backgroundImage = '';
-    getProfile(friendEmail).then(profile => {
-        if (profile.picUrl) {
-            topAv.style.backgroundImage = `url(${profile.picUrl})`;
-            topAv.style.backgroundSize = 'cover';
-            topAv.style.backgroundPosition = 'center';
-            topAv.innerText = '';
-        }
-        const nameEl = document.getElementById('chat-topbar-name');
-        nameEl.innerText = profile.displayName || friendEmail;
+    applyPic(topAv, friendEmail, '');
+    getProfile(friendEmail).then(p => {
+        applyPic(topAv, friendEmail, p.picUrl);
+        const nm = document.getElementById('chat-topbar-name');
+        if (nm) nm.innerText = p.displayName||friendEmail;
     });
+    document.getElementById('chat-topbar-name').innerText   = friendEmail;
+    document.getElementById('chat-topbar-status').innerText = '';
 
-    document.getElementById('chat-topbar-name').innerText = friendEmail;
-
+    // Mark read
     const chatId = getChatId(currentUser.email, friendEmail);
-    db.collection('conversations').doc(chatId).set({ [`unread.${currentUser.email}`]: 0 }, { merge: true });
+    db.collection('conversations').doc(chatId).set({[`unread.${currentUser.email}`]:0},{merge:true});
 
-    db.collection('presence').where('email', '==', friendEmail).limit(1).get().then(snap => {
-        const statusEl = document.getElementById('chat-topbar-status');
+    // Online status
+    db.collection('presence').where('email','==',friendEmail).limit(1).get().then(snap => {
+        const s = document.getElementById('chat-topbar-status');
         if (!snap.empty && snap.docs[0].data().online) {
-            statusEl.innerText = '🟢 Online now'; statusEl.style.color = '#22c55e';
+            s.innerText='🟢 Online now'; s.style.color='#22c55e';
         } else {
-            statusEl.innerText = 'Active recently'; statusEl.style.color = '#94a3b8';
+            s.innerText='Active recently'; s.style.color='#94a3b8';
         }
     });
 
@@ -502,202 +643,146 @@ function closeChatView() {
     if (chat)  chat.classList.add('hidden');
     if (inbox) inbox.classList.remove('hidden');
 }
-
 function backToDMList() { closeChatView(); }
 
 function sendDM() {
     const input = document.getElementById('msg-input');
     const text  = input.value.trim();
-    if (!text || !activeChatFriend) return;
+    if (!text||!activeChatFriend) return;
     input.value = '';
-    saveMessage({ type: 'text', text });
+    saveMessage({type:'text',text});
     clearTypingStatus();
 }
 
 async function sendImageDM(inputEl) {
-    const file = inputEl.files[0]; if (!file) return;
+    const file = inputEl.files[0]; if(!file) return;
     inputEl.value = '';
     try {
         const dataUrl = await compressImage(file, 600, 0.7);
-        saveMessage({ type: 'image', imageDataUrl: dataUrl, text: '📷 Image' });
-    } catch (e) { alert('Could not send image: ' + e.message); }
+        saveMessage({type:'image',imageDataUrl:dataUrl,text:'📷 Image'});
+    } catch(e) { alert('Could not send image: '+e.message); }
 }
 
 function saveMessage(data) {
     const chatId = getChatId(currentUser.email, activeChatFriend);
     const now    = firebase.firestore.FieldValue.serverTimestamp();
-    db.collection('chats').doc(chatId).collection('messages').add({ sender: currentUser.email, createdAt: now, ...data });
+    db.collection('chats').doc(chatId).collection('messages').add({sender:currentUser.email,createdAt:now,...data});
     db.collection('conversations').doc(chatId).set({
-        members: [currentUser.email, activeChatFriend],
-        lastText: data.text || '',
-        lastAt: now,
-        lastSender: currentUser.email,
-        [`unread.${activeChatFriend}`]:  firebase.firestore.FieldValue.increment(1),
-        [`unread.${currentUser.email}`]: 0
-    }, { merge: true });
+        members:[currentUser.email,activeChatFriend],
+        lastText:data.text||'',lastAt:now,lastSender:currentUser.email,
+        [`unread.${activeChatFriend}`]:firebase.firestore.FieldValue.increment(1),
+        [`unread.${currentUser.email}`]:0
+    },{merge:true});
 }
 
-document.getElementById('msg-input').addEventListener('input', function () {
+document.getElementById('msg-input').addEventListener('input', function() {
     if (!activeChatFriend) return;
-    const chatId = getChatId(currentUser.email, activeChatFriend);
-    db.collection('typing').doc(chatId).set({ [currentUser.email]: true }, { merge: true });
+    db.collection('typing').doc(getChatId(currentUser.email,activeChatFriend)).set({[currentUser.email]:true},{merge:true});
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(clearTypingStatus, 2500);
 });
 
 function clearTypingStatus() {
     if (!activeChatFriend) return;
-    const chatId = getChatId(currentUser.email, activeChatFriend);
-    db.collection('typing').doc(chatId).set({ [currentUser.email]: false }, { merge: true });
+    db.collection('typing').doc(getChatId(currentUser.email,activeChatFriend)).set({[currentUser.email]:false},{merge:true});
 }
 
-document.getElementById('msg-input').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDM(); }
+document.getElementById('msg-input').addEventListener('keydown', e => {
+    if (e.key==='Enter'&&!e.shiftKey) { e.preventDefault(); sendDM(); }
 });
 
 function loadMessages() {
-    if (messageListener) { messageListener(); messageListener = null; }
+    if (messageListener) { messageListener(); messageListener=null; }
     const box    = document.getElementById('msg-box');
     const chatId = getChatId(currentUser.email, activeChatFriend);
     box.innerHTML = '';
 
-    // Typing listener
+    // Load friend avatar for message rows
+    let friendPic = '';
+    getProfile(activeChatFriend).then(p => { friendPic = p.picUrl||''; });
+
+    // Typing
     let typingUnsub = db.collection('typing').doc(chatId).onSnapshot(doc => {
-        const isTyping = (doc.data() || {})[activeChatFriend] === true;
+        const isTyping = (doc.data()||{})[activeChatFriend]===true;
         const existing = box.querySelector('.typing-row');
-        if (isTyping && !existing) {
-            const row = document.createElement('div');
-            row.className = 'msg-row theirs typing-row';
-            row.innerHTML = `<div class="msg-row-avatar">${activeChatFriend[0].toUpperCase()}</div>
-                <div class="msg-bubble-col"><div class="msg-bubble" style="padding:10px 14px;">
-                <div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>
-                </div></div>`;
-            box.appendChild(row);
-            box.scrollTop = box.scrollHeight;
-        } else if (!isTyping && existing) { existing.remove(); }
+        if (isTyping&&!existing) {
+            const row=document.createElement('div'); row.className='msg-row theirs typing-row';
+            const av = `<div class="msg-row-avatar" style="${friendPic?`background-image:url(${friendPic});background-size:cover;background-position:center`:''}">`;
+            row.innerHTML=av+'</div><div class="msg-bubble-col"><div class="msg-bubble" style="padding:10px 14px"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div>';
+            box.appendChild(row); box.scrollTop=box.scrollHeight;
+        } else if (!isTyping&&existing) { existing.remove(); }
     });
 
     messageListener = db.collection('chats').doc(chatId).collection('messages')
-        .orderBy('createdAt', 'asc')
+        .orderBy('createdAt','asc')
         .onSnapshot(snap => {
-            const typingRow = box.querySelector('.typing-row');
+            const tRow = box.querySelector('.typing-row');
             box.innerHTML = '';
             let lastDate = '';
 
             snap.forEach(doc => {
                 const m      = doc.data();
-                const isMine = m.sender === currentUser.email;
+                const isMine = m.sender===currentUser.email;
+
                 if (m.createdAt) {
-                    const ds = new Date(m.createdAt.toMillis()).toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
-                    if (ds !== lastDate) {
-                        lastDate = ds;
-                        const dv = document.createElement('div');
-                        dv.className = 'date-divider'; dv.innerText = ds;
+                    const ds = new Date(m.createdAt.toMillis()).toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'});
+                    if (ds!==lastDate) {
+                        lastDate=ds;
+                        const dv=document.createElement('div'); dv.className='date-divider'; dv.innerText=ds;
                         box.appendChild(dv);
                     }
                 }
+
                 const row = document.createElement('div');
-                row.className = `msg-row ${isMine ? 'mine' : 'theirs'}`;
-                const content = m.type === 'image' && m.imageDataUrl
+                row.className = `msg-row ${isMine?'mine':'theirs'}`;
+
+                const avStyle = !isMine && friendPic
+                    ? `style="background-image:url(${friendPic});background-size:cover;background-position:center"`
+                    : '';
+
+                const content = m.type==='image'&&m.imageDataUrl
                     ? `<img src="${m.imageDataUrl}" class="msg-img" onclick="viewImage(this.src)">`
-                    : `<div class="msg-bubble">${escapeHtml(m.text || '')}</div>`;
-                row.innerHTML = `${!isMine ? `<div class="msg-row-avatar">${m.sender[0].toUpperCase()}</div>` : ''}
+                    : `<div class="msg-bubble">${escHtml(m.text||'')}</div>`;
+
+                row.innerHTML = `${!isMine?`<div class="msg-row-avatar" ${avStyle}></div>`:''}
                     <div class="msg-bubble-col">${content}
-                    <div class="msg-time-label">${m.createdAt ? timeAgo(m.createdAt) : ''}</div></div>`;
+                    <div class="msg-time-label">${m.createdAt?timeAgo(m.createdAt):''}</div></div>`;
                 box.appendChild(row);
             });
 
-            if (typingRow) box.appendChild(typingRow);
+            if (tRow) box.appendChild(tRow);
             box.scrollTop = box.scrollHeight;
-        }, () => { typingUnsub && typingUnsub(); });
+        }, () => { typingUnsub&&typingUnsub(); });
 }
 
+// ── UTILITIES ─────────────────────────────────────────────────────────────────
 function viewImage(src) {
-    const lb = document.createElement('div');
-    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer;';
-    lb.innerHTML = `<img src="${src}" style="max-width:95%;max-height:95vh;border-radius:10px;object-fit:contain;">`;
-    lb.onclick = () => lb.remove();
+    const lb=document.createElement('div');
+    lb.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    lb.innerHTML=`<img src="${src}" style="max-width:95%;max-height:95vh;border-radius:10px;object-fit:contain;">`;
+    lb.onclick=()=>lb.remove();
     document.body.appendChild(lb);
 }
 
-function escapeHtml(str) {
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ADMIN SYSTEM (merged from admin.js)
+// ADMIN
 // ══════════════════════════════════════════════════════════════════════════════
 function initAdmin(user) {
-    const isOwner = user.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
-    if (!isOwner) return;
-    injectAdminButton();
-}
-
-function injectAdminButton() {
-    const style = document.createElement('style');
-    style.textContent = `
-        #admin-nav-btn { background:linear-gradient(135deg,#f6d365,#fda085); color:white; border:none; padding:6px 11px; border-radius:8px; font-size:0.8rem; font-weight:700; cursor:pointer; font-family:inherit; transition:opacity 0.2s; }
-        #admin-nav-btn:hover { opacity:0.85; }
-        .owner-badge { display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#f6d365,#fda085);color:white;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:10px;letter-spacing:0.3px;vertical-align:middle;margin-left:5px;text-transform:uppercase;box-shadow:0 1px 4px rgba(253,160,133,0.5); }
-        .admin-badge { display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:10px;letter-spacing:0.3px;vertical-align:middle;margin-left:5px;text-transform:uppercase;box-shadow:0 1px 4px rgba(118,75,162,0.4); }
-        #admin-panel { position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:5000;display:flex;align-items:center;justify-content:center;font-family:'Inter',sans-serif; }
-        .admin-modal { background:white;border-radius:16px;width:92%;max-width:480px;max-height:88vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25); }
-        .admin-modal-header { padding:20px 22px 14px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:white;z-index:1;border-radius:16px 16px 0 0; }
-        .admin-modal-header h2 { font-size:1.1rem;font-weight:700; }
-        .admin-close { background:#f5f5f5;border:none;border-radius:8px;width:30px;height:30px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center; }
-        .admin-tabs { display:flex;border-bottom:1px solid #eee;padding:0 22px;gap:4px; }
-        .admin-tab { background:none;border:none;padding:10px 12px;font-size:0.82rem;font-weight:600;cursor:pointer;font-family:inherit;color:#888;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all 0.15s; }
-        .admin-tab.active { color:#3b82f6;border-bottom-color:#3b82f6; }
-        .admin-tab-content { padding:18px 22px;display:none; }
-        .admin-tab-content.active { display:block; }
-        .stats-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px; }
-        .stat-card { background:#f9f9f9;border:1px solid #eee;border-radius:10px;padding:14px;text-align:center; }
-        .stat-num { font-size:1.8rem;font-weight:700;color:#3b82f6; }
-        .stat-label { font-size:0.75rem;color:#888;margin-top:2px; }
-        .admin-user-row { display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0f0f0;gap:10px; }
-        .admin-user-row:last-child { border-bottom:none; }
-        .admin-user-info { flex:1;min-width:0; }
-        .admin-user-email { font-size:0.83rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-        .admin-user-meta { font-size:0.72rem;color:#888;margin-top:2px; }
-        .admin-actions { display:flex;gap:6px;flex-shrink:0; }
-        .admin-btn { background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:0.75rem;cursor:pointer;font-family:inherit;transition:all 0.15s;white-space:nowrap; }
-        .admin-btn:hover { background:#f5f5f5; }
-        .admin-btn.danger { color:#ef4444;border-color:#fca5a5; }
-        .admin-btn.danger:hover { background:#fff5f5; }
-        .admin-btn.promote { color:#7c3aed;border-color:#c4b5fd; }
-        .admin-btn.promote:hover { background:#f5f3ff; }
-        .admin-post-row { padding:10px 0;border-bottom:1px solid #f0f0f0;display:flex;align-items:flex-start;gap:10px; }
-        .admin-post-row:last-child { border-bottom:none; }
-        .admin-post-text { flex:1;font-size:0.83rem;color:#333;line-height:1.4; }
-        .admin-post-meta { font-size:0.7rem;color:#aaa;margin-top:3px; }
-        .admin-announce-box textarea { width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;font-size:0.9rem;resize:vertical;min-height:80px;outline:none;margin-bottom:10px; }
-        .admin-announce-btn { background:#3b82f6;color:white;border:none;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;font-family:inherit;font-size:0.88rem;width:100%;transition:background 0.2s; }
-        .admin-announce-btn:hover { background:#2563eb; }
-        .admin-search { width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;font-size:0.85rem;outline:none;margin-bottom:14px; }
-        .admin-empty { text-align:center;color:#aaa;padding:20px;font-size:0.85rem; }
-        #announcement-banner { max-width:540px;margin:0 auto 14px; }
-        .announcement-card { background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:12px;padding:14px 16px;font-size:0.88rem;line-height:1.5;display:flex;align-items:flex-start;gap:10px;box-shadow:0 2px 8px rgba(102,126,234,0.3); }
-        .announcement-icon { font-size:1.2rem;flex-shrink:0;margin-top:1px; }
-        .announcement-text { flex:1; }
-        .announcement-label { font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;opacity:0.8;margin-bottom:3px; }
-        .announcement-dismiss { background:rgba(255,255,255,0.2);border:none;color:white;border-radius:6px;padding:2px 8px;font-size:0.75rem;cursor:pointer;flex-shrink:0;font-family:inherit; }
-    `;
-    document.head.appendChild(style);
-
-    const btn = document.createElement('button');
-    btn.id = 'admin-nav-btn'; btn.innerText = '👑 Admin'; btn.onclick = openAdminPanel;
-    document.querySelector('.nav-links').insertBefore(btn, document.querySelector('.nav-links').firstChild);
+    if (user.email.toLowerCase()!==OWNER_EMAIL.toLowerCase()) return;
+    const btn=document.createElement('button');
+    btn.id='admin-nav-btn'; btn.innerText='👑 Admin'; btn.onclick=openAdminPanel;
+    document.querySelector('.nav-links').insertBefore(btn,document.querySelector('.nav-links').firstChild);
 }
 
 function openAdminPanel() {
     if (document.getElementById('admin-panel')) return;
-    const panel = document.createElement('div');
-    panel.id = 'admin-panel';
-    panel.innerHTML = `<div class="admin-modal">
-        <div class="admin-modal-header">
-            <h2>👑 Admin Panel</h2>
-            <button class="admin-close" onclick="document.getElementById('admin-panel').remove()">✕</button>
-        </div>
+    const p=document.createElement('div'); p.id='admin-panel';
+    p.innerHTML=`<div class="admin-modal">
+        <div class="admin-modal-header"><h2>👑 Admin Panel</h2><button class="admin-close" onclick="document.getElementById('admin-panel').remove()">✕</button></div>
         <div class="admin-tabs">
             <button class="admin-tab active" onclick="switchAdminTab('stats')">📊 Stats</button>
             <button class="admin-tab" onclick="switchAdminTab('users')">👥 Users</button>
@@ -708,159 +793,124 @@ function openAdminPanel() {
             <div class="stats-grid">
                 <div class="stat-card"><div class="stat-num" id="stat-posts">…</div><div class="stat-label">Posts</div></div>
                 <div class="stat-card"><div class="stat-num" id="stat-users">…</div><div class="stat-label">Users</div></div>
-                <div class="stat-card"><div class="stat-num" id="stat-likes">…</div><div class="stat-label">Total Likes</div></div>
+                <div class="stat-card"><div class="stat-num" id="stat-likes">…</div><div class="stat-label">Likes</div></div>
                 <div class="stat-card"><div class="stat-num" id="stat-msgs">…</div><div class="stat-label">Messages</div></div>
             </div>
         </div>
         <div id="admin-tab-users" class="admin-tab-content">
-            <input class="admin-search" placeholder="Search users..." oninput="filterAdminUsers(this.value)">
-            <div id="admin-user-list"><div class="admin-empty">Loading...</div></div>
+            <input class="admin-search" placeholder="Search users…" oninput="filterAdminUsers(this.value)">
+            <div id="admin-user-list"><div class="admin-empty">Loading…</div></div>
         </div>
         <div id="admin-tab-posts" class="admin-tab-content">
-            <input class="admin-search" placeholder="Search posts..." oninput="filterAdminPosts(this.value)">
-            <div id="admin-post-list"><div class="admin-empty">Loading...</div></div>
+            <input class="admin-search" placeholder="Search posts…" oninput="filterAdminPosts(this.value)">
+            <div id="admin-post-list"><div class="admin-empty">Loading…</div></div>
         </div>
         <div id="admin-tab-announce" class="admin-tab-content">
             <div class="admin-announce-box">
-                <textarea id="announce-text" placeholder="Write your announcement..."></textarea>
+                <textarea id="announce-text" placeholder="Write your announcement…"></textarea>
                 <button class="admin-announce-btn" onclick="sendAnnouncement()">📢 Post Announcement</button>
             </div>
             <button class="admin-btn danger" style="margin-top:10px;width:100%" onclick="clearAnnouncement()">🗑 Clear Announcement</button>
         </div>
     </div>`;
-    document.body.appendChild(panel);
-    panel.addEventListener('click', e => { if (e.target === panel) panel.remove(); });
+    document.body.appendChild(p);
+    p.addEventListener('click',e=>{if(e.target===p)p.remove();});
     loadAdminStats(); loadAdminUsers(); loadAdminPosts();
 }
 
-window.switchAdminTab = function(tab) {
-    document.querySelectorAll('.admin-tab').forEach((t,i) => t.classList.toggle('active', ['stats','users','posts','announce'][i] === tab));
-    document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
-    const el = document.getElementById('admin-tab-' + tab);
-    if (el) el.classList.add('active');
+window.switchAdminTab=function(tab){
+    document.querySelectorAll('.admin-tab').forEach((t,i)=>t.classList.toggle('active',['stats','users','posts','announce'][i]===tab));
+    document.querySelectorAll('.admin-tab-content').forEach(c=>c.classList.remove('active'));
+    const el=document.getElementById('admin-tab-'+tab); if(el)el.classList.add('active');
 };
 
-function loadAdminStats() {
-    db.collection('posts').get().then(snap => {
-        let likes = 0; const emails = new Set();
-        snap.forEach(doc => { likes += doc.data().likes || 0; emails.add(doc.data().email); });
-        document.getElementById('stat-posts').innerText = snap.size;
-        document.getElementById('stat-users').innerText = emails.size;
-        document.getElementById('stat-likes').innerText = likes;
+function loadAdminStats(){
+    db.collection('posts').get().then(snap=>{
+        let likes=0; const emails=new Set();
+        snap.forEach(d=>{likes+=d.data().likes||0;emails.add(d.data().email);});
+        document.getElementById('stat-posts').innerText=snap.size;
+        document.getElementById('stat-users').innerText=emails.size;
+        document.getElementById('stat-likes').innerText=likes;
     });
-    db.collection('chats').get().then(async snap => {
-        let total = 0;
-        await Promise.all([...snap.docs].map(doc => db.collection('chats').doc(doc.id).collection('messages').get().then(m => total += m.size)));
-        document.getElementById('stat-msgs').innerText = total;
-    });
-}
-
-let allAdminUsers = [], allAdminPosts = [];
-
-function loadAdminUsers() {
-    db.collection('posts').get().then(snap => {
-        const map = {};
-        snap.forEach(doc => {
-            const d = doc.data(); if (!d.email) return;
-            if (!map[d.email]) map[d.email] = { email: d.email, posts: 0, likes: 0 };
-            map[d.email].posts++; map[d.email].likes += d.likes || 0;
-        });
-        allAdminUsers = Object.values(map);
-        renderAdminUsers(allAdminUsers);
+    db.collection('chats').get().then(async snap=>{
+        let total=0;
+        await Promise.all([...snap.docs].map(d=>db.collection('chats').doc(d.id).collection('messages').get().then(m=>total+=m.size)));
+        document.getElementById('stat-msgs').innerText=total;
     });
 }
 
-function renderAdminUsers(users) {
-    const list = document.getElementById('admin-user-list'); if (!list) return;
-    if (!users.length) { list.innerHTML = '<div class="admin-empty">No users</div>'; return; }
-    list.innerHTML = '';
-    users.forEach(u => {
-        const isOwnerAcc = u.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
-        const row = document.createElement('div'); row.className = 'admin-user-row';
-        db.collection('admins').doc(u.email).get().then(adoc => {
-            const isAdmin = adoc.exists;
-            row.innerHTML = `<div class="admin-user-info">
-                <div class="admin-user-email">${u.email}${isOwnerAcc ? ' <span class="owner-badge">👑 Owner</span>' : ''}${isAdmin && !isOwnerAcc ? ' <span class="admin-badge">🛡 Admin</span>' : ''}</div>
-                <div class="admin-user-meta">${u.posts} posts · ${u.likes} likes</div>
-            </div>
-            <div class="admin-actions">${!isOwnerAcc ? `${isAdmin
-                ? `<button class="admin-btn" onclick="toggleAdmin('${u.email}',false)">Remove Admin</button>`
-                : `<button class="admin-btn promote" onclick="toggleAdmin('${u.email}',true)">Make Admin</button>`}
-                <button class="admin-btn danger" onclick="adminDeleteUserPosts('${u.email}')">🗑</button>`
-                : '<span style="font-size:0.75rem;color:#aaa">Owner</span>'}</div>`;
+let allAdminUsers=[],allAdminPosts=[];
+
+function loadAdminUsers(){
+    db.collection('posts').get().then(snap=>{
+        const map={};
+        snap.forEach(doc=>{const d=doc.data();if(!d.email)return;if(!map[d.email])map[d.email]={email:d.email,posts:0,likes:0};map[d.email].posts++;map[d.email].likes+=d.likes||0;});
+        allAdminUsers=Object.values(map); renderAdminUsers(allAdminUsers);
+    });
+}
+
+function renderAdminUsers(users){
+    const list=document.getElementById('admin-user-list');if(!list)return;
+    if(!users.length){list.innerHTML='<div class="admin-empty">No users</div>';return;}
+    list.innerHTML='';
+    users.forEach(u=>{
+        const isOwnerAcc=u.email.toLowerCase()===OWNER_EMAIL.toLowerCase();
+        const row=document.createElement('div');row.className='admin-user-row';
+        db.collection('admins').doc(u.email).get().then(adoc=>{
+            const isAdmin=adoc.exists;
+            row.innerHTML=`<div class="admin-user-info"><div class="admin-user-email">${u.email}${isOwnerAcc?' <span class="owner-badge">👑 Owner</span>':''}${isAdmin&&!isOwnerAcc?' <span class="admin-badge">🛡 Admin</span>':''}</div><div class="admin-user-meta">${u.posts} posts · ${u.likes} likes</div></div>
+            <div class="admin-actions">${!isOwnerAcc?`${isAdmin?`<button class="admin-btn" onclick="toggleAdmin('${u.email}',false)">Remove</button>`:`<button class="admin-btn promote" onclick="toggleAdmin('${u.email}',true)">Make Admin</button>`}<button class="admin-btn danger" onclick="adminDeleteUserPosts('${u.email}')">🗑</button>`:'<span style="font-size:.73rem;color:#aaa">Owner</span>'}</div>`;
         });
         list.appendChild(row);
     });
 }
 
-window.filterAdminUsers = q => renderAdminUsers(allAdminUsers.filter(u => u.email.toLowerCase().includes(q.toLowerCase())));
-window.toggleAdmin = function(email, make) {
-    const action = make
-        ? db.collection('admins').doc(email).set({ email, grantedAt: firebase.firestore.FieldValue.serverTimestamp() })
-        : db.collection('admins').doc(email).delete();
-    action.then(() => { alert(make ? `✅ ${email} is now Admin` : `${email} removed`); loadAdminUsers(); });
+window.filterAdminUsers=q=>renderAdminUsers(allAdminUsers.filter(u=>u.email.toLowerCase().includes(q.toLowerCase())));
+window.toggleAdmin=function(email,make){
+    (make?db.collection('admins').doc(email).set({email,grantedAt:firebase.firestore.FieldValue.serverTimestamp()}):db.collection('admins').doc(email).delete())
+        .then(()=>{alert(make?`✅ ${email} is now Admin`:`${email} removed`);loadAdminUsers();});
 };
-window.adminDeleteUserPosts = function(email) {
-    if (!confirm(`Delete ALL posts by ${email}?`)) return;
-    db.collection('posts').where('email','==',email).get().then(snap => {
-        const batch = db.batch();
-        snap.forEach(doc => batch.delete(doc.ref));
-        return batch.commit();
-    }).then(() => { alert('Done'); loadAdminPosts(); });
+window.adminDeleteUserPosts=function(email){
+    if(!confirm(`Delete ALL posts by ${email}?`))return;
+    db.collection('posts').where('email','==',email).get().then(snap=>{const b=db.batch();snap.forEach(d=>b.delete(d.ref));return b.commit();}).then(()=>{alert('Done');loadAdminPosts();});
 };
 
-function loadAdminPosts() {
-    db.collection('posts').orderBy('createdAt','desc').get().then(snap => {
-        allAdminPosts = [];
-        snap.forEach(doc => allAdminPosts.push({ id: doc.id, ...doc.data() }));
-        renderAdminPosts(allAdminPosts);
+function loadAdminPosts(){
+    db.collection('posts').orderBy('createdAt','desc').get().then(snap=>{
+        allAdminPosts=[];snap.forEach(doc=>allAdminPosts.push({id:doc.id,...doc.data()}));renderAdminPosts(allAdminPosts);
     });
 }
-function renderAdminPosts(posts) {
-    const list = document.getElementById('admin-post-list'); if (!list) return;
-    if (!posts.length) { list.innerHTML = '<div class="admin-empty">No posts</div>'; return; }
-    list.innerHTML = '';
-    posts.forEach(p => {
-        const row = document.createElement('div'); row.className = 'admin-post-row';
-        row.innerHTML = `<div class="admin-post-text"><div>${(p.text||'').substring(0,100)}${p.text?.length>100?'...':''}</div>
-            <div class="admin-post-meta">by ${p.email} · 👁 ${p.views||0} · ❤️ ${p.likes||0}</div></div>
-            <button class="admin-btn danger" onclick="adminDeletePost('${p.id}')">🗑</button>`;
+function renderAdminPosts(posts){
+    const list=document.getElementById('admin-post-list');if(!list)return;
+    if(!posts.length){list.innerHTML='<div class="admin-empty">No posts</div>';return;}
+    list.innerHTML='';
+    posts.forEach(p=>{
+        const row=document.createElement('div');row.className='admin-post-row';
+        row.innerHTML=`<div class="admin-post-text"><div>${(p.text||'').substring(0,100)}${(p.text||'').length>100?'…':''}</div><div class="admin-post-meta">by ${p.email} · 👁 ${p.views||0} · ❤️ ${p.likes||0}</div></div><button class="admin-btn danger" onclick="adminDeletePost('${p.id}')">🗑</button>`;
         list.appendChild(row);
     });
 }
-window.filterAdminPosts = q => renderAdminPosts(allAdminPosts.filter(p => (p.text||'').toLowerCase().includes(q.toLowerCase()) || (p.email||'').toLowerCase().includes(q.toLowerCase())));
-window.adminDeletePost = function(id) {
-    if (!confirm('Delete this post?')) return;
-    db.collection('posts').doc(id).delete().then(() => { allAdminPosts = allAdminPosts.filter(p => p.id !== id); renderAdminPosts(allAdminPosts); });
+window.filterAdminPosts=q=>renderAdminPosts(allAdminPosts.filter(p=>(p.text||'').toLowerCase().includes(q.toLowerCase())||(p.email||'').toLowerCase().includes(q.toLowerCase())));
+window.adminDeletePost=function(id){
+    if(!confirm('Delete?'))return;
+    db.collection('posts').doc(id).delete().then(()=>{allAdminPosts=allAdminPosts.filter(p=>p.id!==id);renderAdminPosts(allAdminPosts);});
+};
+window.sendAnnouncement=function(){
+    const text=document.getElementById('announce-text').value.trim();
+    if(!text){alert('Write something!');return;}
+    db.collection('announcements').doc('current').set({text,id:Date.now().toString(),createdAt:firebase.firestore.FieldValue.serverTimestamp()}).then(()=>{alert('📢 Posted!');document.getElementById('announce-text').value='';});
+};
+window.clearAnnouncement=function(){
+    if(!confirm('Clear?'))return;
+    db.collection('announcements').doc('current').delete().then(()=>alert('Cleared'));
 };
 
-window.sendAnnouncement = function() {
-    const text = document.getElementById('announce-text').value.trim();
-    if (!text) { alert('Write something first!'); return; }
-    db.collection('announcements').doc('current').set({ text, id: Date.now().toString(), createdAt: firebase.firestore.FieldValue.serverTimestamp() })
-        .then(() => { alert('📢 Posted!'); document.getElementById('announce-text').value = ''; });
-};
-window.clearAnnouncement = function() {
-    if (!confirm('Clear announcement?')) return;
-    db.collection('announcements').doc('current').delete().then(() => alert('Cleared'));
-};
-
-function loadAnnouncementBanner() {
-    db.collection('announcements').doc('current').onSnapshot(doc => {
-        let banner = document.getElementById('announcement-banner');
-        if (!doc.exists || !doc.data().text) { if (banner) banner.remove(); return; }
-        const data = doc.data();
-        if (sessionStorage.getItem('ann-dismissed') === data.id) return;
-        if (!banner) {
-            banner = document.createElement('div');
-            banner.id = 'announcement-banner';
-            const fv = document.getElementById('feed-view');
-            if (fv) fv.insertBefore(banner, fv.firstChild);
-        }
-        banner.innerHTML = `<div class="announcement-card">
-            <div class="announcement-icon">📢</div>
-            <div class="announcement-text"><div class="announcement-label">Announcement</div>${data.text}</div>
-            <button class="announcement-dismiss" onclick="sessionStorage.setItem('ann-dismissed','${data.id}');this.closest('#announcement-banner').remove()">✕</button>
-        </div>`;
+function loadAnnouncementBanner(){
+    db.collection('announcements').doc('current').onSnapshot(doc=>{
+        const area=document.getElementById('announcement-area'); if(!area)return;
+        if(!doc.exists||!doc.data().text){area.innerHTML='';return;}
+        const data=doc.data();
+        if(sessionStorage.getItem('ann-dismissed')===data.id){area.innerHTML='';return;}
+        area.innerHTML=`<div class="announcement-card"><div class="announcement-icon">📢</div><div class="announcement-text"><div class="announcement-label">Announcement</div>${escHtml(data.text)}</div><button class="announcement-dismiss" onclick="sessionStorage.setItem('ann-dismissed','${data.id}');document.getElementById('announcement-area').innerHTML=''">✕</button></div>`;
     });
 }
