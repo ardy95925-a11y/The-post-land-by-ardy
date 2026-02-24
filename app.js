@@ -9,29 +9,26 @@ const firebaseConfig = {
 };
 
 firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+const auth    = firebase.auth();
+const db      = firebase.firestore();
 const storage = firebase.storage();
 
-let currentUser = null;
+let currentUser      = null;
 let activeChatFriend = null;
-let messageListener = null;
+let messageListener  = null;
+let inboxListener    = null;
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function handleAuth(type) {
     const email   = document.getElementById('auth-email').value.trim();
     const pass    = document.getElementById('auth-pass').value.trim();
     const errorEl = document.getElementById('auth-error');
-
-    if (!email || !pass) { errorEl.innerText = "Please enter your email and password."; return; }
-
-    errorEl.style.color = '#888';
-    errorEl.innerText = type === 'signup' ? "Creating account..." : "Logging in...";
-
+    if (!email || !pass) { errorEl.innerText = 'Please enter email and password.'; return; }
+    errorEl.style.color  = '#888';
+    errorEl.innerText    = type === 'signup' ? 'Creating account...' : 'Logging in...';
     const action = type === 'signup'
         ? auth.createUserWithEmailAndPassword(email, pass)
         : auth.signInWithEmailAndPassword(email, pass);
-
     action.catch(e => { errorEl.style.color = '#e53e3e'; errorEl.innerText = e.message; });
 }
 
@@ -41,6 +38,7 @@ auth.onAuthStateChanged(user => {
         document.getElementById('auth-overlay').style.display = 'none';
         showView('feed');
         loadPosts();
+        listenInbox();
     } else {
         document.getElementById('auth-overlay').style.display = 'flex';
     }
@@ -58,53 +56,38 @@ function showView(view) {
         btn.classList.toggle('active', btn.dataset.view === view);
     });
 
+    // When leaving DM view close active chat
     if (view !== 'dm') {
-        activeChatFriend = null;
-        if (messageListener) { messageListener(); messageListener = null; }
-        document.getElementById('chat-container').classList.add('hidden');
-        document.getElementById('dm-placeholder').classList.remove('hidden');
+        closeChatPanel();
     }
 }
 
 // ── CHARACTER COUNTER ─────────────────────────────────────────────────────────
 document.getElementById('post-text').addEventListener('input', function () {
-    const len     = this.value.length;
+    const len    = this.value.length;
     const counter = document.getElementById('char-counter');
-    counter.innerText    = len + ' / 300';
-    counter.style.color  = len > 280 ? '#e53e3e' : '#888';
+    counter.innerText   = len + ' / 300';
+    counter.style.color = len > 280 ? '#e53e3e' : '#888';
     if (len > 300) this.value = this.value.substring(0, 300);
 });
 
-// ── IMAGE — compress to small JPEG using canvas ───────────────────────────────
-// This converts ANY image (HEIC, PNG, WEBP, etc.) into a small JPEG data URL
-// and stores it directly — no Firebase Storage needed at all.
+// ── IMAGE HANDLING ────────────────────────────────────────────────────────────
 function compressImageToDataURL(file, maxWidth, quality) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onerror = () => reject(new Error('Could not read file'));
-        reader.onload = function (e) {
+        reader.onload = e => {
             const img = new Image();
             img.onerror = () => reject(new Error('Could not decode image'));
-            img.onload = function () {
-                let w = img.width;
-                let h = img.height;
+            img.onload = () => {
+                let w = img.width, h = img.height;
                 if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
-
                 const canvas = document.createElement('canvas');
-                canvas.width  = w;
-                canvas.height = h;
+                canvas.width = w; canvas.height = h;
                 canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-
                 const dataUrl = canvas.toDataURL('image/jpeg', quality);
-                // Rough size check — Firestore docs max 1MB
-                const sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
-                if (sizeKB > 950) {
-                    // Try again at lower quality
-                    const smaller = canvas.toDataURL('image/jpeg', 0.5);
-                    resolve(smaller);
-                } else {
-                    resolve(dataUrl);
-                }
+                const sizeKB  = Math.round((dataUrl.length * 3) / 4 / 1024);
+                resolve(sizeKB > 950 ? canvas.toDataURL('image/jpeg', 0.5) : dataUrl);
             };
             img.src = e.target.result;
         };
@@ -112,18 +95,14 @@ function compressImageToDataURL(file, maxWidth, quality) {
     });
 }
 
-// Image preview on file select
 document.getElementById('post-image').addEventListener('change', function () {
-    const file      = this.files[0];
-    const preview   = document.getElementById('image-preview');
-    const removeBtn = document.getElementById('remove-image-btn');
+    const file = this.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = e => {
-        preview.src = e.target.result;
-        preview.classList.remove('hidden');
-        removeBtn.classList.remove('hidden');
+        document.getElementById('image-preview').src = e.target.result;
+        document.getElementById('image-preview').classList.remove('hidden');
+        document.getElementById('remove-image-btn').classList.remove('hidden');
     };
     reader.readAsDataURL(file);
 });
@@ -141,56 +120,42 @@ async function uploadPost() {
     const textEl   = document.getElementById('post-text');
     const tagsEl   = document.getElementById('post-tags');
     const imageEl  = document.getElementById('post-image');
+    const text     = textEl ? textEl.value.trim() : '';
+    const file     = imageEl && imageEl.files.length > 0 ? imageEl.files[0] : null;
 
-    const text = textEl ? textEl.value.trim() : '';
-    const file = imageEl && imageEl.files.length > 0 ? imageEl.files[0] : null;
-
-    // Clean tags — strip anything that could cause issues
     let tags = [];
     if (tagsEl && tagsEl.value.trim()) {
-        tags = tagsEl.value
-            .split(',')
+        tags = tagsEl.value.split(',')
             .map(t => t.trim().replace(/[^a-zA-Z0-9]/g, ''))
-            .filter(t => t.length > 0)
-            .slice(0, 10);
+            .filter(t => t.length > 0).slice(0, 10);
     }
 
     function setStatus(msg, color) {
         if (!statusEl) return;
-        statusEl.innerText    = msg;
-        statusEl.style.color  = color || '#888';
+        statusEl.innerText   = msg;
+        statusEl.style.color = color || '#888';
     }
 
     if (!text) { setStatus('Please write something first!', '#e53e3e'); return; }
 
-    btn.disabled    = true;
-    btn.innerText   = 'Publishing...';
+    btn.disabled = true; btn.innerText = 'Publishing...';
     setStatus('', '#888');
 
     try {
         let imageDataUrl = '';
-
         if (file) {
             setStatus('Processing image...', '#888');
-            // Compress to max 800px wide, 0.75 quality JPEG — keeps it under Firestore 1MB limit
             imageDataUrl = await compressImageToDataURL(file, 800, 0.75);
             setStatus('Saving post...', '#888');
         }
 
         await db.collection('posts').add({
-            uid:          currentUser.uid,
-            email:        currentUser.email,
-            text:         text,
-            imageDataUrl: imageDataUrl,   // stored directly — no Storage needed
-            imageUrl:     '',             // kept for backwards compatibility
-            tags:         tags,
-            views:        0,
-            likes:        0,
-            likedBy:      [],
-            createdAt:    firebase.firestore.FieldValue.serverTimestamp()
+            uid: currentUser.uid, email: currentUser.email,
+            text, imageDataUrl, imageUrl: '',
+            tags, views: 0, likes: 0, likedBy: [],
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
 
-        // Reset form
         if (textEl)  textEl.value  = '';
         if (tagsEl)  tagsEl.value  = '';
         if (imageEl) imageEl.value = '';
@@ -200,14 +165,12 @@ async function uploadPost() {
 
         setStatus('✓ Posted!', '#38a169');
         setTimeout(() => { setStatus('', ''); showView('feed'); }, 900);
-
     } catch (err) {
         console.error('Post failed:', err);
         setStatus('Failed: ' + err.message, '#e53e3e');
     }
 
-    btn.disabled  = false;
-    btn.innerText = 'Publish';
+    btn.disabled = false; btn.innerText = 'Publish';
 }
 
 // ── TIME AGO ──────────────────────────────────────────────────────────────────
@@ -225,35 +188,35 @@ function loadPosts() {
     db.collection('posts').orderBy('createdAt', 'desc').onSnapshot(snapshot => {
         const list = document.getElementById('posts-list');
         list.innerHTML = '';
-
         if (snapshot.empty) {
             list.innerHTML = '<p style="text-align:center;color:#888;padding:40px;font-size:0.9rem;">No posts yet. Be the first!</p>';
             return;
         }
-
         snapshot.forEach(doc => {
             const post     = doc.data();
             const isOwn    = post.uid === currentUser.uid;
             const likedBy  = post.likedBy || [];
             const hasLiked = likedBy.includes(currentUser.uid);
             const likes    = post.likes || 0;
-
-            // Support both old imageUrl (Storage) and new imageDataUrl (base64)
-            const imgSrc = post.imageDataUrl || post.imageUrl || '';
+            const imgSrc   = post.imageDataUrl || post.imageUrl || '';
+            const avatar   = (post.email || '?')[0].toUpperCase();
 
             const div = document.createElement('div');
             div.className = 'post';
             div.innerHTML = `
                 <div class="post-header">
-                    <span class="post-author ${isOwn ? 'own' : ''}"
-                          onclick="${isOwn ? '' : `startChat('${post.email}')`}"
-                          title="${isOwn ? 'You' : 'Message ' + post.email}">
-                        ${post.email}${isOwn ? ' (you)' : ''}
-                    </span>
-                    <div class="post-meta">
-                        <span class="post-time">${timeAgo(post.createdAt)}</span>
-                        <span class="views-count">👁 ${post.views || 0}</span>
+                    <div style="display:flex;align-items:center;gap:9px;">
+                        <div class="avatar">${avatar}</div>
+                        <div>
+                            <span class="post-author ${isOwn ? 'own' : ''}"
+                                  onclick="${isOwn ? '' : `startChat('${post.email}')`}"
+                                  title="${isOwn ? 'You' : 'Message ' + post.email}">
+                                ${post.email}${isOwn ? ' (you)' : ''}
+                            </span>
+                            <div class="post-time">${timeAgo(post.createdAt)}</div>
+                        </div>
                     </div>
+                    <span class="views-count">👁 ${post.views || 0}</span>
                 </div>
                 ${imgSrc ? `<img src="${imgSrc}" class="post-img" loading="lazy">` : ''}
                 <div class="post-content">
@@ -291,33 +254,117 @@ function toggleLike(postId, hasLiked) {
 // ── DELETE ────────────────────────────────────────────────────────────────────
 async function deletePost(postId) {
     if (!confirm('Delete this post?')) return;
-    try {
-        await db.collection('posts').doc(postId).delete();
-    } catch (e) {
-        alert('Could not delete: ' + e.message);
-    }
+    try { await db.collection('posts').doc(postId).delete(); }
+    catch (e) { alert('Could not delete: ' + e.message); }
 }
 
-// ── DMs ───────────────────────────────────────────────────────────────────────
+// ── DM INBOX ─────────────────────────────────────────────────────────────────
 function getChatId(a, b) { return [a, b].sort().join('__'); }
 
+// Listen to all conversations this user is part of
+function listenInbox() {
+    // We track conversations by watching the user's convo list in Firestore
+    // Each time a message is sent we update a lightweight 'conversations' doc
+    db.collection('conversations')
+        .where('members', 'array-contains', currentUser.email)
+        .orderBy('lastAt', 'desc')
+        .onSnapshot(snapshot => {
+            const inboxList = document.getElementById('inbox-list');
+            if (!inboxList) return;
+
+            if (snapshot.empty) {
+                inboxList.innerHTML = `
+                    <div class="dm-placeholder">
+                        <div class="icon">✉️</div>
+                        <p>No conversations yet.<br>Tap a username on a post to message them.</p>
+                    </div>`;
+                return;
+            }
+
+            let totalUnread = 0;
+            inboxList.innerHTML = '';
+
+            snapshot.forEach(doc => {
+                const convo   = doc.data();
+                const other   = convo.members.find(m => m !== currentUser.email) || '';
+                const avatar  = (other || '?')[0].toUpperCase();
+                const unread  = convo.unread && convo.unread[currentUser.email] ? convo.unread[currentUser.email] : 0;
+                const preview = convo.lastText || '';
+                const time    = convo.lastAt ? timeAgo(convo.lastAt) : '';
+                totalUnread  += unread;
+
+                const item = document.createElement('div');
+                item.className = 'inbox-item' + (unread > 0 ? ' unread' : '');
+                item.onclick   = () => startChat(other);
+                item.innerHTML = `
+                    <div class="inbox-avatar">${avatar}</div>
+                    <div class="inbox-info">
+                        <div class="inbox-name">${other}</div>
+                        <div class="inbox-preview">${preview}</div>
+                    </div>
+                    <div class="inbox-meta">
+                        <div class="inbox-time">${time}</div>
+                        ${unread > 0 ? `<div class="inbox-unread">${unread}</div>` : ''}
+                    </div>
+                `;
+                inboxList.appendChild(item);
+            });
+
+            // Update nav badge
+            const badge = document.getElementById('unread-badge');
+            if (badge) {
+                badge.innerText = totalUnread;
+                badge.classList.toggle('hidden', totalUnread === 0);
+            }
+        });
+}
+
+// ── START CHAT ────────────────────────────────────────────────────────────────
 function startChat(friendEmail) {
     if (!friendEmail || friendEmail === currentUser.email) return;
     activeChatFriend = friendEmail;
-    document.getElementById('dm-placeholder').classList.add('hidden');
+
+    // Show chat panel, hide inbox
+    document.getElementById('dm-inbox').classList.add('hidden');
     document.getElementById('chat-container').classList.remove('hidden');
     document.getElementById('chatting-with').innerText = friendEmail;
+
     showView('dm');
+
+    // Mark as read
+    const chatId = getChatId(currentUser.email, friendEmail);
+    db.collection('conversations').doc(chatId).set({
+        [`unread.${currentUser.email}`]: 0
+    }, { merge: true });
+
     loadMessages();
 }
 
+// ── SEND DM ───────────────────────────────────────────────────────────────────
 function sendDM() {
     const input = document.getElementById('msg-input');
     const text  = input.value.trim();
     if (!text || !activeChatFriend) return;
-    db.collection('chats').doc(getChatId(currentUser.email, activeChatFriend)).collection('messages').add({
-        sender: currentUser.email, text, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+
+    const chatId = getChatId(currentUser.email, activeChatFriend);
+    const now    = firebase.firestore.FieldValue.serverTimestamp();
+
+    // Save message
+    db.collection('chats').doc(chatId).collection('messages').add({
+        sender: currentUser.email, text, createdAt: now
     });
+
+    // Update conversation index for inbox
+    db.collection('conversations').doc(chatId).set({
+        members:  [currentUser.email, activeChatFriend],
+        lastText: text,
+        lastAt:   now,
+        lastSender: currentUser.email,
+        // Increment unread for the receiver
+        [`unread.${activeChatFriend}`]: firebase.firestore.FieldValue.increment(1),
+        [`unread.${currentUser.email}`]: 0
+    }, { merge: true });
+
     input.value = '';
 }
 
@@ -325,29 +372,56 @@ document.getElementById('msg-input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDM(); }
 });
 
+// ── LOAD MESSAGES ─────────────────────────────────────────────────────────────
 function loadMessages() {
     if (messageListener) { messageListener(); messageListener = null; }
     const box = document.getElementById('msg-box');
     box.innerHTML = '';
-    messageListener = db.collection('chats').doc(getChatId(currentUser.email, activeChatFriend))
+
+    messageListener = db.collection('chats')
+        .doc(getChatId(currentUser.email, activeChatFriend))
         .collection('messages').orderBy('createdAt', 'asc')
         .onSnapshot(snapshot => {
             box.innerHTML = '';
+            let lastDate = '';
             snapshot.forEach(doc => {
-                const m     = doc.data();
+                const m      = doc.data();
                 const isMine = m.sender === currentUser.email;
-                const wrap  = document.createElement('div');
+
+                // Date divider
+                if (m.createdAt) {
+                    const d = new Date(m.createdAt.toMillis()).toLocaleDateString();
+                    if (d !== lastDate) {
+                        lastDate = d;
+                        const divider = document.createElement('div');
+                        divider.className   = 'date-divider';
+                        divider.innerText   = d;
+                        box.appendChild(divider);
+                    }
+                }
+
+                const wrap = document.createElement('div');
                 wrap.className = `msg-bubble-wrap ${isMine ? 'mine' : 'theirs'}`;
-                wrap.innerHTML = `<div>${!isMine ? `<div class="msg-sender">${m.sender}</div>` : ''}<div class="msg-bubble ${isMine ? 'mine' : 'theirs'}">${m.text}</div></div>`;
+                wrap.innerHTML = `
+                    <div>
+                        ${!isMine ? `<div class="msg-sender">${m.sender.split('@')[0]}</div>` : ''}
+                        <div class="msg-bubble ${isMine ? 'mine' : 'theirs'}">${m.text}</div>
+                        <div class="msg-time">${m.createdAt ? timeAgo(m.createdAt) : ''}</div>
+                    </div>`;
                 box.appendChild(wrap);
             });
             box.scrollTop = box.scrollHeight;
         });
 }
 
+// ── BACK TO INBOX ─────────────────────────────────────────────────────────────
 function backToDMList() {
+    closeChatPanel();
+}
+
+function closeChatPanel() {
     activeChatFriend = null;
     if (messageListener) { messageListener(); messageListener = null; }
     document.getElementById('chat-container').classList.add('hidden');
-    document.getElementById('dm-placeholder').classList.remove('hidden');
+    document.getElementById('dm-inbox').classList.remove('hidden');
 }
