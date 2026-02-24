@@ -4,271 +4,93 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Post Land</title>
+
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
 
-    <style>
-        :root { --primary: #0095f6; --bg: #fafafa; --border: #dbdbdb; --white: #ffffff; }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-        body { background-color: var(--bg); padding-top: 70px; }
-
-        /* Auth Overlay */
-        #auth-overlay { position: fixed; inset: 0; background: white; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .auth-card { width: 300px; padding: 20px; border: 1px solid var(--border); border-radius: 8px; }
-
-        /* Nav */
-        nav { background: white; border-bottom: 1px solid var(--border); padding: 10px 20px; display: flex; justify-content: space-between; position: fixed; top: 0; width: 100%; z-index: 100; }
-        .nav-links button { background: none; border: none; cursor: pointer; padding: 8px; font-weight: bold; }
-
-        /* Feed */
-        .container { max-width: 500px; margin: auto; padding: 10px; }
-        .post { background: white; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
-        .post-img { width: 100%; display: block; background: #eee; }
-        .post-content { padding: 15px; }
-        .tag { color: var(--primary); margin-right: 5px; font-size: 0.9em; }
-        
-        /* Form */
-        input, textarea { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid var(--border); border-radius: 4px; }
-        .btn { background: var(--primary); color: white; border: none; padding: 10px; width: 100%; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        
-        #create-view, #dm-view { display: none; }
-        .hidden { display: none; }
-        .views-count { font-size: 0.8em; color: gray; }
-    </style>
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <!-- LOGIN SCREEN -->
+    <!-- AUTH OVERLAY -->
     <div id="auth-overlay">
         <div class="auth-card">
-            <h2 style="text-align: center; margin-bottom: 20px;">Post Land</h2>
-            <input type="email" id="auth-email" placeholder="Email">
-            <input type="password" id="auth-pass" placeholder="Password">
+            <h2>Post Land</h2>
+            <input type="email" id="auth-email" placeholder="Email address" autocomplete="email">
+            <input type="password" id="auth-pass" placeholder="Password" autocomplete="current-password">
             <button class="btn" onclick="handleAuth('login')">Login</button>
-            <button class="btn" onclick="handleAuth('signup')" style="background: #333; margin-top: 10px;">Sign Up</button>
-            <p id="auth-error" style="color: red; font-size: 12px; margin-top: 10px;"></p>
+            <button class="btn-secondary" onclick="handleAuth('signup')">Create Account</button>
+            <p id="auth-error"></p>
         </div>
     </div>
 
+    <!-- NAV -->
     <nav>
-        <div onclick="location.reload()" style="cursor:pointer"><strong>Post Land</strong></div>
+        <div class="nav-brand" onclick="showView('feed')">Post Land</div>
         <div class="nav-links">
-            <button onclick="showView('feed')">🏠</button>
-            <button onclick="showView('create')">➕ Post</button>
-            <button onclick="showView('dm')">✉️</button>
-            <button onclick="logout()" style="color:red">Logout</button>
+            <button class="nav-btn" data-view="feed" onclick="showView('feed')">🏠 Home</button>
+            <button class="nav-btn" data-view="create" onclick="showView('create')">➕ Post</button>
+            <button class="nav-btn" data-view="dm" onclick="showView('dm')">✉️ DMs</button>
+            <button class="nav-btn danger" onclick="logout()">Logout</button>
         </div>
     </nav>
 
     <div class="container">
-        <!-- FEED VIEW -->
+
+        <!-- FEED -->
         <div id="feed-view">
-            <div id="posts-list">Loading posts...</div>
+            <div id="posts-list">
+                <div id="loading">Loading posts...</div>
+            </div>
         </div>
 
-        <!-- CREATE POST VIEW -->
+        <!-- CREATE POST -->
         <div id="create-view">
-            <div style="background: white; padding: 20px; border: 1px solid var(--border);">
+            <div class="create-card">
                 <h3>New Post</h3>
-                <textarea id="post-text" placeholder="Share some news or thoughts..."></textarea>
+                <textarea id="post-text" placeholder="What's on your mind?"></textarea>
                 <input type="file" id="post-image" accept="image/*">
-                <input type="text" id="post-tags" placeholder="Tags (comma separated: news,tech,fun)">
+                <input type="text" id="post-tags" placeholder="Tags: news, tech, fun">
                 <button class="btn" id="upload-btn" onclick="uploadPost()">Publish</button>
             </div>
         </div>
 
-        <!-- DM VIEW -->
+        <!-- DMs -->
         <div id="dm-view">
-            <h3>Direct Messages</h3>
-            <p>Tap a username in the feed to chat</p>
-            <div id="chat-container" class="hidden">
-                <h4 id="chatting-with">Chat</h4>
-                <div id="msg-box" style="height: 300px; overflow-y: auto; background: #eee; padding: 10px; margin-bottom: 10px;"></div>
-                <input type="text" id="msg-input" placeholder="Type message...">
-                <button class="btn" onclick="sendDM()">Send</button>
+            <div class="dm-container">
+                <div class="dm-header">
+                    <h3>Direct Messages</h3>
+                </div>
+
+                <!-- Placeholder when no chat is open -->
+                <div id="dm-placeholder" class="dm-placeholder">
+                    <div class="icon">✉️</div>
+                    <p>Tap a username on a post to start a chat</p>
+                </div>
+
+                <!-- Active chat -->
+                <div id="chat-container" class="hidden">
+                    <div class="dm-header">
+                        <button class="dm-back-btn" onclick="backToDMList()">← Back</button>
+                        <span id="chatting-with" style="font-weight:600; font-size:0.9rem;"></span>
+                        <div></div>
+                    </div>
+                    <div id="msg-box"></div>
+                    <div class="dm-input-row">
+                        <input type="text" id="msg-input" placeholder="Type a message...">
+                        <button class="send-btn" onclick="sendDM()">Send</button>
+                    </div>
+                </div>
             </div>
         </div>
+
     </div>
 
-<script>
-    const firebaseConfig = {
-        apiKey: "AIzaSyDHD8A6I7hqECe5mg1XBb39HcFIu0tyB4c",
-        authDomain: "social-globe.firebaseapp.com",
-        projectId: "social-globe",
-        storageBucket: "social-globe.firebasestorage.app",
-        messagingSenderId: "986186459032",
-        appId: "1:986186459032:web:6ab6ce3a2be54bcb04aded",
-        measurementId: "G-FP1CJH5KF5"
-    };
-
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-    const storage = firebase.storage();
-
-    let currentUser = null;
-    let activeChatFriend = null;
-
-    // --- AUTHENTICATION ---
-    function handleAuth(type) {
-        const email = document.getElementById('auth-email').value.trim();
-        const pass = document.getElementById('auth-pass').value.trim();
-        const errorEl = document.getElementById('auth-error');
-
-        errorEl.innerText = "Trying to " + type + "...";
-
-        if(!email || !pass) {
-            errorEl.innerText = "Please enter email and password";
-            return;
-        }
-
-        if(type === 'signup') {
-            auth.createUserWithEmailAndPassword(email, pass)
-                .then(() => errorEl.innerText = "Signed up!")
-                .catch(e => errorEl.innerText = "Error: " + e.message);
-        } else {
-            auth.signInWithEmailAndPassword(email, pass)
-                .then(() => errorEl.innerText = "Logged in!")
-                .catch(e => errorEl.innerText = "Error: " + e.message);
-        }
-    }
-
-    auth.onAuthStateChanged(user => {
-        if (user) {
-            currentUser = user;
-            const overlay = document.getElementById('auth-overlay');
-            overlay.style.display = 'none';
-            loadPosts();
-        } else {
-            const overlay = document.getElementById('auth-overlay');
-            overlay.style.display = 'flex';
-        }
-    });
-
-    function logout() { auth.signOut(); location.reload(); }
-
-    // --- NAVIGATION ---
-    function showView(view) {
-        document.getElementById('feed-view').style.display = view === 'feed' ? 'block' : 'none';
-        document.getElementById('create-view').style.display = view === 'create' ? 'block' : 'none';
-        document.getElementById('dm-view').style.display = view === 'dm' ? 'block' : 'none';
-    }
-
-    // --- POSTS LOGIC ---
-    async function uploadPost() {
-        const btn = document.getElementById('upload-btn');
-        const text = document.getElementById('post-text').value;
-        const tags = document.getElementById('post-tags').value.split(',').map(t => t.trim());
-        const file = document.getElementById('post-image').files[0];
-        
-        if(!text) return alert("Please add text");
-        btn.disabled = true;
-        btn.innerText = "Uploading...";
-
-        let imageUrl = "";
-        if(file) {
-            const ref = storage.ref(`posts/${Date.now()}_${file.name}`);
-            await ref.put(file);
-            imageUrl = await ref.getDownloadURL();
-        }
-
-        await db.collection('posts').add({
-            uid: currentUser.uid,
-            email: currentUser.email,
-            text: text,
-            imageUrl: imageUrl,
-            tags: tags,
-            views: 0,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-
-        document.getElementById('post-text').value = "";
-        document.getElementById('post-tags').value = "";
-        btn.disabled = false;
-        btn.innerText = "Publish";
-        showView('feed');
-    }
-
-    function loadPosts() {
-        db.collection('posts').orderBy('createdAt', 'desc').onSnapshot(snapshot => {
-            const list = document.getElementById('posts-list');
-            list.innerHTML = "";
-            snapshot.forEach(doc => {
-                const post = doc.data();
-                const div = document.createElement('div');
-                div.className = 'post';
-                div.innerHTML = `
-                    <div style="padding:10px; border-bottom:1px solid #eee; font-size:12px; display:flex; justify-content:space-between">
-                        <b onclick="startChat('${post.email}')" style="cursor:pointer; color:var(--primary)">${post.email}</b>
-                        <span class="views-count">${post.views || 0} views</span>
-                    </div>
-                    ${post.imageUrl ? `<img src="${post.imageUrl}" class="post-img">` : ''}
-                    <div class="post-content">
-                        <p>${post.text}</p>
-                        <div style="margin-top:10px">
-                            ${post.tags ? post.tags.map(t => `<span class="tag">#${t}</span>`).join('') : ''}
-                        </div>
-                        <button onclick="incrementView('${doc.id}')" style="margin-top:10px; background:none; border:1px solid #ddd; padding:5px 10px; border-radius:4px; cursor:pointer; font-size:12px;">👁 View</button>
-                    </div>
-                `;
-                list.appendChild(div);
-            });
-        });
-    }
-
-    function incrementView(postId) {
-        db.collection('posts').doc(postId).update({ 
-            views: firebase.firestore.FieldValue.increment(1) 
-        });
-    }
-
-    // --- DM LOGIC ---
-    function startChat(friendEmail) {
-        if(friendEmail === currentUser.email) return alert("That's you!");
-        activeChatFriend = friendEmail;
-        showView('dm');
-        document.getElementById('chat-container').classList.remove('hidden');
-        document.getElementById('chatting-with').innerText = "Chatting with: " + friendEmail;
-        loadMessages();
-    }
-
-    function sendDM() {
-        const text = document.getElementById('msg-input').value;
-        if(!text) return;
-
-        db.collection('messages').add({
-            sender: currentUser.email,
-            receiver: activeChatFriend,
-            text: text,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        document.getElementById('msg-input').value = "";
-    }
-
-    function loadMessages() {
-        db.collection('messages')
-            .orderBy('createdAt', 'asc')
-            .onSnapshot(snapshot => {
-                const box = document.getElementById('msg-box');
-                box.innerHTML = "";
-                snapshot.forEach(doc => {
-                    const m = doc.data();
-                    if((m.sender === currentUser.email && m.receiver === activeChatFriend) || 
-                       (m.sender === activeChatFriend && m.receiver === currentUser.email)) {
-                        const div = document.createElement('div');
-                        div.style.textAlign = m.sender === currentUser.email ? 'right' : 'left';
-                        div.innerHTML = `<p style="background:white; display:inline-block; padding:5px 10px; border-radius:10px; margin:2px;">
-                            <small style="display:block; font-size:8px;">${m.sender}</small>${m.text}</p>`;
-                        box.appendChild(div);
-                    }
-                });
-                box.scrollTop = box.scrollHeight;
-            });
-    }
-</script>
+    <!-- App Logic -->
+    <script src="app.js"></script>
 </body>
-</html>
 </html>
