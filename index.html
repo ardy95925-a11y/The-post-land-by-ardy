@@ -43,7 +43,7 @@
             <span id="unread-badge" class="unread-badge hidden"></span>
         </button>
         <button class="nav-btn" data-view="profile" onclick="showView('profile')" title="Profile">
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <div id="nav-profile-pic" class="nav-profile-pic"></div>
         </button>
     </div>
 </nav>
@@ -59,7 +59,7 @@
     <div id="create-view">
         <div class="create-card">
             <div class="create-header">
-                <div class="create-avatar" id="create-avatar">?</div>
+                <div class="create-avatar" id="create-avatar"></div>
                 <textarea id="post-text" placeholder="What's on your mind?" maxlength="300"></textarea>
             </div>
             <div class="create-toolbar">
@@ -84,10 +84,8 @@
         </div>
     </div>
 
-    <!-- DMs — completely new system -->
+    <!-- DMs -->
     <div id="dm-view">
-
-        <!-- INBOX -->
         <div id="dm-inbox-view">
             <div class="dm-page-header">
                 <h2>Messages</h2>
@@ -95,8 +93,6 @@
             </div>
             <div id="inbox-list"></div>
         </div>
-
-        <!-- CHAT -->
         <div id="dm-chat-view" class="hidden">
             <div class="chat-topbar">
                 <button class="back-btn" onclick="closeChatView()">
@@ -117,19 +113,23 @@
                 </button>
                 <input type="file" id="dm-image-input" accept="image/*" onchange="sendImageDM(this)">
                 <input type="text" id="msg-input" placeholder="Message...">
-                <button class="chat-send-btn" onclick="sendDM()" id="chat-send-btn">
+                <button class="chat-send-btn" onclick="sendDM()">
                     <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
                 </button>
             </div>
         </div>
-
     </div>
 
     <!-- PROFILE -->
     <div id="profile-view">
         <div class="profile-card">
-            <div class="profile-avatar-big" id="profile-avatar-big"></div>
+            <!-- Profile pic + edit button injected by profiles.js -->
+            <div id="profile-pic-area">
+                <div class="profile-avatar-big" id="profile-avatar-big"></div>
+            </div>
+            <div class="profile-display-name" id="profile-display-name"></div>
             <div class="profile-email" id="profile-email"></div>
+            <div class="profile-bio-display" id="profile-bio-display"></div>
             <div class="profile-stats" id="profile-stats"></div>
             <div class="profile-posts" id="profile-posts"></div>
             <button class="btn btn-outline" style="margin-top:16px;" onclick="logout()">Sign Out</button>
@@ -140,6 +140,6 @@
 
 <script src="app.js"></script>
 <script src="extras.js"></script>
-<script src="admin.js"></script>
+<script src="profiles.js"></script>
 </body>
 </html>
