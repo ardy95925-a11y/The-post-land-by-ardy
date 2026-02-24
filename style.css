@@ -8,6 +8,8 @@
     --border: #e0e0e0;
     --text: #1a1a1a;
     --muted: #888;
+    --danger: #e53e3e;
+    --success: #38a169;
     --radius: 12px;
     --shadow: 0 1px 6px rgba(0,0,0,0.07);
 }
@@ -50,7 +52,7 @@ body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--t
     transition: border 0.2s;
 }
 .auth-card input:focus { border-color: var(--primary); }
-#auth-error { font-size: 0.8rem; margin-top: 10px; color: #e53e3e; min-height: 16px; }
+#auth-error { font-size: 0.8rem; margin-top: 10px; min-height: 16px; }
 
 /* ---- NAV ---- */
 nav {
@@ -66,28 +68,23 @@ nav {
     z-index: 100;
     box-shadow: var(--shadow);
 }
-.nav-brand {
-    font-size: 1.1rem;
-    font-weight: 600;
-    cursor: pointer;
-    letter-spacing: -0.3px;
-}
+.nav-brand { font-size: 1.1rem; font-weight: 600; cursor: pointer; letter-spacing: -0.3px; }
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-btn {
     background: none;
     border: none;
     cursor: pointer;
-    padding: 8px 10px;
+    padding: 8px 12px;
     border-radius: 8px;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     font-weight: 500;
     color: var(--text);
     font-family: inherit;
     transition: background 0.15s;
 }
 .nav-btn:hover { background: var(--bg); }
-.nav-btn.active { color: var(--primary); }
-.nav-btn.danger { color: #e53e3e; }
+.nav-btn.active { color: var(--primary); background: #e8f4fd; }
+.nav-btn.danger { color: var(--danger); }
 
 /* ---- CONTAINER ---- */
 .container { max-width: 520px; margin: auto; padding: 16px 12px; }
@@ -102,7 +99,7 @@ nav {
     box-shadow: var(--shadow);
     transition: box-shadow 0.2s;
 }
-.post:hover { box-shadow: 0 3px 12px rgba(0,0,0,0.1); }
+.post:hover { box-shadow: 0 3px 14px rgba(0,0,0,0.1); }
 .post-header {
     padding: 12px 14px;
     border-bottom: 1px solid var(--border);
@@ -115,36 +112,42 @@ nav {
     font-size: 0.85rem;
     color: var(--primary);
     cursor: pointer;
-    text-decoration: none;
 }
-.post-author:hover { text-decoration: underline; }
+.post-author.own { color: var(--text); cursor: default; }
+.post-author:not(.own):hover { text-decoration: underline; }
 .post-meta { display: flex; align-items: center; gap: 10px; }
 .views-count { font-size: 0.75rem; color: var(--muted); }
 .post-time { font-size: 0.72rem; color: var(--muted); }
-.post-img { width: 100%; display: block; max-height: 400px; object-fit: cover; }
+.post-img { width: 100%; display: block; max-height: 420px; object-fit: cover; }
 .post-content { padding: 14px; }
-.post-text { font-size: 0.95rem; line-height: 1.5; }
+.post-text { font-size: 0.95rem; line-height: 1.55; }
 .post-tags { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-.tag {
-    color: var(--primary);
-    font-size: 0.8rem;
-    background: #e8f4fd;
-    padding: 2px 8px;
-    border-radius: 20px;
+.tag { color: var(--primary); font-size: 0.8rem; background: #e8f4fd; padding: 2px 9px; border-radius: 20px; }
+
+/* ---- POST ACTIONS ---- */
+.post-actions {
+    padding: 8px 14px 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border);
 }
-.post-actions { padding: 8px 14px 12px; display: flex; gap: 8px; }
 .action-btn {
     background: none;
     border: 1px solid var(--border);
-    padding: 5px 12px;
+    padding: 5px 13px;
     border-radius: 20px;
-    font-size: 0.78rem;
+    font-size: 0.8rem;
     cursor: pointer;
     font-family: inherit;
     color: var(--muted);
     transition: all 0.15s;
 }
 .action-btn:hover { background: var(--bg); color: var(--text); }
+.like-btn.liked { color: #e53e3e; border-color: #f9c0c0; background: #fff5f5; }
+.like-btn.liked:hover { background: #ffe8e8; }
+.delete-btn { color: var(--danger); border-color: #fca5a5; }
+.delete-btn:hover { background: #fff5f5; }
 
 /* ---- CREATE POST ---- */
 .create-card {
@@ -166,11 +169,17 @@ nav {
     min-height: 100px;
     outline: none;
     transition: border 0.2s;
-    margin-bottom: 12px;
+    margin-bottom: 4px;
 }
 .create-card textarea:focus { border-color: var(--primary); }
-.create-card input[type="text"],
-.create-card input[type="file"] {
+.char-counter {
+    display: block;
+    text-align: right;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 12px;
+}
+.create-card input[type="text"] {
     width: 100%;
     padding: 10px 14px;
     border: 1px solid var(--border);
@@ -182,6 +191,45 @@ nav {
     transition: border 0.2s;
 }
 .create-card input[type="text"]:focus { border-color: var(--primary); }
+
+/* Image upload */
+.image-upload-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.image-upload-label {
+    display: inline-block;
+    padding: 8px 14px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.image-upload-label:hover { border-color: var(--primary); color: var(--primary); background: #e8f4fd; }
+input[type="file"] { display: none; }
+.remove-img-btn {
+    background: none;
+    border: 1px solid #fca5a5;
+    color: var(--danger);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    font-family: inherit;
+}
+.img-preview {
+    width: 100%;
+    max-height: 200px;
+    object-fit: cover;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+}
+.upload-status { font-size: 0.82rem; margin-bottom: 10px; min-height: 18px; }
 
 /* ---- BUTTONS ---- */
 .btn {
@@ -241,12 +289,12 @@ nav {
     font-family: inherit;
 }
 .dm-placeholder {
-    padding: 40px 20px;
+    padding: 50px 20px;
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
 }
-.dm-placeholder .icon { font-size: 2rem; margin-bottom: 10px; }
+.dm-placeholder .icon { font-size: 2.2rem; margin-bottom: 12px; }
 #msg-box {
     height: 360px;
     overflow-y: auto;
@@ -261,8 +309,8 @@ nav {
 .msg-bubble-wrap.theirs { justify-content: flex-start; }
 .msg-bubble {
     max-width: 72%;
-    padding: 8px 12px;
-    border-radius: 16px;
+    padding: 8px 13px;
+    border-radius: 18px;
     font-size: 0.9rem;
     line-height: 1.4;
 }
@@ -304,4 +352,3 @@ nav {
 /* ---- UTILITIES ---- */
 .hidden { display: none !important; }
 #feed-view, #create-view, #dm-view { display: none; }
-#loading { text-align: center; padding: 30px; color: var(--muted); font-size: 0.9rem; }
