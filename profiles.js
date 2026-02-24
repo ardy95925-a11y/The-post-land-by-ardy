@@ -1,543 +1,621 @@
 /**
- * profiles.js — Profile customisation for Post Land
- * Adds: profile picture, display name, bio, profile banner colour
- * Completely standalone — no edits to other files needed.
- * Add <script src="profiles.js"></script> after app.js in index.html.
+ * profiles.js — Profile system for Post Land
+ * Works in full sync with app.js:
+ *   - Calls window.onProfileSaved() after saving so app.js can refresh nav/create avatars
+ *   - Uses window.profileCache and window.getProfile from app.js
+ *   - Implements window.renderOwnProfile() which app.js calls on showView('profile')
+ *   - Implements window.openEditModal() so the Edit Profile button works
  */
 
 (function () {
 
-    // ── Inject styles ─────────────────────────────────────────────────────────
-    const css = `
-        /* Nav profile pic */
-        .nav-profile-pic {
-            width: 26px; height: 26px; border-radius: 50%;
-            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 0.72rem; font-weight: 700; color: white;
-            background-size: cover; background-position: center;
-            text-transform: uppercase; overflow: hidden;
-        }
-
-        /* Profile page redesign */
-        .profile-card {
-            background: var(--white, #fff);
-            border-radius: 16px; overflow: hidden;
-            border: 1px solid var(--border, #e2e8f0);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-        }
-        .profile-banner {
-            height: 110px; width: 100%;
-            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-            position: relative;
-        }
-        .profile-banner-change {
-            position: absolute; bottom: 8px; right: 10px;
-            background: rgba(0,0,0,0.4); color: white; border: none;
-            border-radius: 6px; padding: 4px 10px; font-size: 0.72rem;
-            cursor: pointer; font-family: inherit;
-        }
-        .profile-banner-change:hover { background: rgba(0,0,0,0.6); }
-
-        .profile-pic-wrapper {
-            display: flex; align-items: flex-end; justify-content: space-between;
-            padding: 0 18px; margin-top: -36px; margin-bottom: 10px;
-        }
-        .profile-avatar-big {
-            width: 72px; height: 72px; border-radius: 50%;
-            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-            color: white; font-weight: 700; font-size: 1.8rem;
-            display: flex; align-items: center; justify-content: center;
-            border: 3px solid white; text-transform: uppercase;
-            background-size: cover; background-position: center;
-            flex-shrink: 0; overflow: hidden; cursor: pointer;
-            position: relative;
-        }
-        .profile-avatar-big:hover::after {
-            content: '📷'; position: absolute; inset: 0;
-            background: rgba(0,0,0,0.45); display: flex;
-            align-items: center; justify-content: center;
-            font-size: 1.4rem; border-radius: 50%;
-        }
-        .profile-edit-btn {
-            background: none; border: 1.5px solid var(--border, #e2e8f0);
-            border-radius: 8px; padding: 6px 14px; font-size: 0.82rem;
-            font-weight: 600; cursor: pointer; font-family: inherit;
-            color: var(--text, #0f172a); transition: background 0.15s;
-            margin-bottom: 4px;
-        }
-        .profile-edit-btn:hover { background: #f1f5f9; }
-
-        .profile-info-section { padding: 0 18px 16px; }
-        .profile-display-name {
-            font-size: 1.1rem; font-weight: 700; color: var(--text, #0f172a);
-            margin-bottom: 2px;
-        }
-        .profile-email {
-            font-size: 0.78rem; color: var(--muted, #94a3b8); margin-bottom: 8px;
-        }
-        .profile-bio-display {
-            font-size: 0.88rem; color: var(--text-2, #475569);
-            line-height: 1.5; margin-bottom: 12px; white-space: pre-wrap;
-        }
-        .profile-stats {
-            display: flex; gap: 0; border-top: 1px solid var(--border, #e2e8f0);
-            border-bottom: 1px solid var(--border, #e2e8f0);
-            margin: 0 0 14px;
-        }
-        .profile-stat {
-            flex: 1; text-align: center; padding: 12px 6px;
-            border-right: 1px solid var(--border, #e2e8f0);
-        }
-        .profile-stat:last-child { border-right: none; }
-        .profile-stat-num { font-size: 1.2rem; font-weight: 700; color: var(--primary, #3b82f6); }
-        .profile-stat-label { font-size: 0.68rem; color: var(--muted, #94a3b8); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.3px; }
-        .profile-posts { padding: 0 18px; }
-        .profile-posts h4 { font-size: 0.78rem; font-weight: 700; color: var(--muted, #94a3b8); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
-        .profile-mini-post {
-            background: var(--bg, #f1f5f9); border-radius: 10px; padding: 10px 12px;
-            margin-bottom: 8px; font-size: 0.85rem; line-height: 1.4;
-            color: var(--text-2, #475569); border: 1px solid var(--border, #e2e8f0);
-        }
-
-        /* Edit modal */
-        #profile-edit-modal {
-            position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-            z-index: 6000; display: flex; align-items: flex-end; justify-content: center;
-            font-family: 'Inter', sans-serif;
-        }
-        @media (min-width: 500px) {
-            #profile-edit-modal { align-items: center; }
-        }
-        .profile-edit-sheet {
-            background: white; border-radius: 20px 20px 0 0; width: 100%; max-width: 480px;
-            padding: 24px 22px 34px; box-shadow: 0 -8px 40px rgba(0,0,0,0.2);
-            animation: slideUp 0.22s ease;
-        }
-        @media (min-width: 500px) {
-            .profile-edit-sheet { border-radius: 20px; padding: 28px 26px; }
-        }
-        @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
-        .edit-sheet-header {
-            display: flex; align-items: center; justify-content: space-between;
-            margin-bottom: 22px;
-        }
-        .edit-sheet-header h3 { font-size: 1.05rem; font-weight: 700; }
-        .edit-sheet-close {
-            background: #f1f5f9; border: none; border-radius: 8px;
-            width: 30px; height: 30px; font-size: 1rem; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-        }
-
-        /* Profile pic picker inside modal */
-        .edit-pic-row {
-            display: flex; align-items: center; gap: 14px; margin-bottom: 22px;
-            padding-bottom: 18px; border-bottom: 1px solid #f0f0f0;
-        }
-        .edit-pic-preview {
-            width: 62px; height: 62px; border-radius: 50%;
-            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-            color: white; font-weight: 700; font-size: 1.4rem;
-            display: flex; align-items: center; justify-content: center;
-            text-transform: uppercase; overflow: hidden;
-            background-size: cover; background-position: center;
-            flex-shrink: 0; border: 2px solid #e2e8f0;
-        }
-        .edit-pic-btns { display: flex; flex-direction: column; gap: 7px; }
-        .edit-pic-upload-btn {
-            background: #3b82f6; color: white; border: none;
-            border-radius: 8px; padding: 7px 14px; font-size: 0.82rem;
-            font-weight: 600; cursor: pointer; font-family: inherit;
-        }
-        .edit-pic-remove-btn {
-            background: none; border: 1.5px solid #e2e8f0; color: #ef4444;
-            border-radius: 8px; padding: 6px 14px; font-size: 0.82rem;
-            font-weight: 600; cursor: pointer; font-family: inherit;
-        }
-        .edit-pic-remove-btn:hover { background: #fef2f2; }
-
-        .edit-field-label {
-            font-size: 0.75rem; font-weight: 600; color: #94a3b8;
-            text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px;
-        }
-        .edit-field-input {
-            width: 100%; padding: 10px 13px; border: 1.5px solid #e2e8f0;
-            border-radius: 9px; font-size: 0.92rem; font-family: inherit;
-            outline: none; margin-bottom: 16px; transition: border 0.2s;
-            color: #0f172a; background: #f8fafc;
-        }
-        .edit-field-input:focus { border-color: #3b82f6; background: white; }
-        .edit-field-textarea {
-            width: 100%; padding: 10px 13px; border: 1.5px solid #e2e8f0;
-            border-radius: 9px; font-size: 0.92rem; font-family: inherit;
-            outline: none; margin-bottom: 16px; resize: none; min-height: 80px;
-            transition: border 0.2s; color: #0f172a; background: #f8fafc;
-            line-height: 1.5;
-        }
-        .edit-field-textarea:focus { border-color: #3b82f6; background: white; }
-
-        /* Banner colour picker */
-        .banner-colour-label { font-size: 0.75rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }
-        .banner-colour-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-        .banner-swatch {
-            width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
-            border: 2.5px solid transparent; transition: transform 0.15s, border-color 0.15s;
-            flex-shrink: 0;
-        }
-        .banner-swatch:hover { transform: scale(1.15); }
-        .banner-swatch.selected { border-color: #0f172a; transform: scale(1.15); }
-
-        .edit-save-btn {
-            background: #3b82f6; color: white; border: none; width: 100%;
-            padding: 12px; border-radius: 10px; font-size: 0.95rem;
-            font-weight: 600; cursor: pointer; font-family: inherit;
-            transition: background 0.2s; margin-top: 4px;
-        }
-        .edit-save-btn:hover { background: #2563eb; }
-        .edit-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .edit-status { text-align: center; font-size: 0.82rem; margin-top: 8px; min-height: 18px; }
-    `;
-    const styleEl = document.createElement('style');
-    styleEl.textContent = css;
-    document.head.appendChild(styleEl);
-
-    // ── Banner colour presets ─────────────────────────────────────────────────
+    // ── Constants ─────────────────────────────────────────────────────────────
     const BANNERS = [
         'linear-gradient(135deg,#3b82f6,#8b5cf6)',
         'linear-gradient(135deg,#f43f5e,#fb923c)',
-        'linear-gradient(135deg,#06b6d4,#3b82f6)',
+        'linear-gradient(135deg,#06b6d4,#22d3ee)',
         'linear-gradient(135deg,#10b981,#3b82f6)',
         'linear-gradient(135deg,#f59e0b,#ef4444)',
         'linear-gradient(135deg,#8b5cf6,#ec4899)',
         'linear-gradient(135deg,#0f172a,#334155)',
         'linear-gradient(135deg,#065f46,#10b981)',
+        'linear-gradient(135deg,#7c3aed,#db2777)',
+        'linear-gradient(135deg,#1d4ed8,#0ea5e9)',
     ];
 
     // ── State ─────────────────────────────────────────────────────────────────
-    let currentUser  = null;
-    let profileData  = {};
-    let pendingPicDataUrl = null;
+    let myProfileData = {};
+    let pendingPic    = null;   // null | '__remove__' | dataUrl string
+    let myUser        = null;
 
-    // ── Wait for app.js to set auth ───────────────────────────────────────────
-    function waitForAuth(cb) {
+    // ── Inject CSS ────────────────────────────────────────────────────────────
+    const style = document.createElement('style');
+    style.textContent = `
+        /* ── Profile page ── */
+        .profile-card { padding: 0; }
+        .p-banner {
+            height: 120px; width: 100%; position: relative;
+            background: linear-gradient(135deg,#3b82f6,#8b5cf6);
+            cursor: pointer;
+        }
+        .p-banner-hint {
+            position: absolute; bottom: 8px; right: 10px;
+            background: rgba(0,0,0,.38); color: white; border: none;
+            border-radius: 6px; padding: 4px 10px; font-size: .7rem;
+            cursor: pointer; font-family: inherit; pointer-events: none;
+        }
+        .p-top-row {
+            display: flex; align-items: flex-end;
+            justify-content: space-between;
+            padding: 0 16px; margin-top: -38px; margin-bottom: 10px;
+        }
+        .p-avatar {
+            width: 76px; height: 76px; border-radius: 50%;
+            border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,.12);
+            background: linear-gradient(135deg,#3b82f6,#8b5cf6);
+            color: white; font-weight: 700; font-size: 1.8rem;
+            display: flex; align-items: center; justify-content: center;
+            text-transform: uppercase; cursor: pointer;
+            background-size: cover; background-position: center;
+            overflow: hidden; flex-shrink: 0; position: relative;
+        }
+        .p-avatar:hover::after {
+            content: '📷'; position: absolute; inset: 0; border-radius: 50%;
+            background: rgba(0,0,0,.45); display: flex; align-items: center;
+            justify-content: center; font-size: 1.3rem;
+        }
+        .p-edit-btn {
+            background: none; border: 1.5px solid #e2e8f0;
+            border-radius: 20px; padding: 7px 16px; font-size: .82rem;
+            font-weight: 600; cursor: pointer; font-family: inherit;
+            color: #0f172a; transition: background .15s; margin-bottom: 4px;
+        }
+        .p-edit-btn:hover { background: #f1f5f9; }
+        .p-info { padding: 0 16px 14px; }
+        .p-name {
+            font-size: 1.1rem; font-weight: 700; color: #0f172a; margin-bottom: 2px;
+        }
+        .p-handle { font-size: .76rem; color: #94a3b8; margin-bottom: 8px; }
+        .p-bio {
+            font-size: .87rem; color: #475569; line-height: 1.55;
+            margin-bottom: 12px; white-space: pre-wrap;
+        }
+        .p-links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+        .p-link-tag {
+            font-size: .78rem; color: #3b82f6; background: #eff6ff;
+            padding: 3px 10px; border-radius: 20px; font-weight: 500;
+            display: flex; align-items: center; gap: 4px;
+        }
+        .p-stats-row {
+            display: flex; border-top: 1px solid #e2e8f0;
+            border-bottom: 1px solid #e2e8f0; margin-bottom: 16px;
+        }
+        .p-stat {
+            flex: 1; text-align: center; padding: 11px 4px;
+            border-right: 1px solid #e2e8f0;
+        }
+        .p-stat:last-child { border-right: none; }
+        .p-stat-n { font-size: 1.15rem; font-weight: 700; color: #3b82f6; }
+        .p-stat-l {
+            font-size: .64rem; color: #94a3b8; margin-top: 2px;
+            text-transform: uppercase; letter-spacing: .3px;
+        }
+        .p-section-title {
+            font-size: .72rem; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .5px;
+            margin: 0 16px 10px; display: flex; align-items: center; gap: 6px;
+        }
+        .p-mini-post {
+            margin: 0 16px 8px; background: #f8fafc; border-radius: 10px;
+            padding: 10px 12px; font-size: .84rem; line-height: 1.4;
+            color: #475569; border: 1px solid #e2e8f0;
+        }
+        .p-mini-post-img {
+            width: 100%; max-height: 120px; object-fit: cover;
+            border-radius: 8px; margin-top: 6px;
+        }
+        .p-bookmarks { margin: 0 16px; }
+        .p-bookmark-item {
+            background: #f8fafc; border-radius: 10px; padding: 10px 12px;
+            font-size: .84rem; line-height: 1.4; color: #475569;
+            border: 1px solid #e2e8f0; margin-bottom: 8px;
+        }
+        .p-bookmark-meta { font-size: .7rem; color: #94a3b8; margin-top: 4px; }
+        .p-actions { padding: 14px 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+        .p-tab-bar {
+            display: flex; border-bottom: 1px solid #e2e8f0; margin-bottom: 14px;
+        }
+        .p-tab {
+            flex: 1; background: none; border: none; padding: 11px 4px;
+            font-size: .82rem; font-weight: 600; cursor: pointer; font-family: inherit;
+            color: #94a3b8; border-bottom: 2px solid transparent; margin-bottom: -1px;
+            transition: all .15s;
+        }
+        .p-tab.active { color: #3b82f6; border-bottom-color: #3b82f6; }
+
+        /* ── Edit modal ── */
+        #profile-edit-modal {
+            position: fixed; inset: 0; background: rgba(0,0,0,.5);
+            z-index: 7000; display: flex; align-items: flex-end;
+            justify-content: center; font-family: 'Inter', sans-serif;
+        }
+        @media(min-width:520px) { #profile-edit-modal { align-items: center; } }
+        .pe-sheet {
+            background: white; border-radius: 22px 22px 0 0; width: 100%;
+            max-width: 480px; max-height: 92vh; overflow-y: auto;
+            padding: 22px 20px 36px;
+            box-shadow: 0 -10px 50px rgba(0,0,0,.18);
+            animation: peSlide .22s ease;
+        }
+        @media(min-width:520px) { .pe-sheet { border-radius: 22px; } }
+        @keyframes peSlide {
+            from { transform: translateY(28px); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+        .pe-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .pe-header h3 { font-size: 1.05rem; font-weight: 700; }
+        .pe-close {
+            background: #f1f5f9; border: none; border-radius: 8px;
+            width: 32px; height: 32px; font-size: 1rem; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .pe-pic-row {
+            display: flex; align-items: center; gap: 14px;
+            margin-bottom: 20px; padding-bottom: 18px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .pe-pic-prev {
+            width: 64px; height: 64px; border-radius: 50%; flex-shrink: 0;
+            background: linear-gradient(135deg,#3b82f6,#8b5cf6); color: white;
+            font-weight: 700; font-size: 1.4rem; display: flex;
+            align-items: center; justify-content: center; text-transform: uppercase;
+            border: 2px solid #e2e8f0; background-size: cover;
+            background-position: center; overflow: hidden;
+        }
+        .pe-pic-actions { display: flex; flex-direction: column; gap: 7px; }
+        .pe-upload-btn {
+            background: #3b82f6; color: white; border: none;
+            border-radius: 8px; padding: 7px 16px; font-size: .82rem;
+            font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        .pe-remove-btn {
+            background: none; border: 1.5px solid #e2e8f0; color: #ef4444;
+            border-radius: 8px; padding: 6px 16px; font-size: .82rem;
+            font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        .pe-remove-btn:hover { background: #fef2f2; }
+        .pe-label {
+            font-size: .72rem; font-weight: 700; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px;
+        }
+        .pe-input, .pe-textarea {
+            width: 100%; padding: 10px 13px; border: 1.5px solid #e2e8f0;
+            border-radius: 9px; font-size: .92rem; font-family: inherit;
+            outline: none; transition: border .2s; color: #0f172a;
+            background: #f8fafc; margin-bottom: 14px;
+        }
+        .pe-input:focus, .pe-textarea:focus {
+            border-color: #3b82f6; background: white;
+        }
+        .pe-textarea { resize: none; min-height: 76px; line-height: 1.5; }
+        .pe-banner-label { font-size: .72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px; }
+        .pe-swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+        .pe-swatch {
+            width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+            border: 2.5px solid transparent; transition: transform .15s, border-color .15s;
+        }
+        .pe-swatch:hover { transform: scale(1.15); }
+        .pe-swatch.sel { border-color: #0f172a; transform: scale(1.18); }
+        .pe-save-btn {
+            background: #3b82f6; color: white; border: none; width: 100%;
+            padding: 13px; border-radius: 10px; font-size: .94rem; font-weight: 700;
+            cursor: pointer; font-family: inherit; transition: background .2s; margin-top: 4px;
+        }
+        .pe-save-btn:hover { background: #2563eb; }
+        .pe-save-btn:disabled { opacity: .6; cursor: not-allowed; }
+        .pe-status { text-align: center; font-size: .82rem; margin-top: 8px; min-height: 18px; }
+    `;
+    document.head.appendChild(style);
+
+    // ── Wait for Firebase auth ────────────────────────────────────────────────
+    function waitForReady(cb) {
         const iv = setInterval(() => {
-            if (window.firebase && firebase.apps.length && window.db) {
-                firebase.auth().onAuthStateChanged(user => {
-                    if (user) { clearInterval(iv); cb(user); }
-                });
+            if (window.firebase && firebase.apps.length && window.db && window.currentUser) {
                 clearInterval(iv);
+                cb(window.currentUser);
             }
-        }, 150);
+        }, 100);
     }
 
-    waitForAuth(user => {
-        currentUser = user;
-        loadMyProfile();
-        overrideProfileView();
+    waitForReady(user => {
+        myUser = user;
+        listenToMyProfile();
     });
 
-    // ── Load my profile from Firestore ────────────────────────────────────────
-    function loadMyProfile() {
-        firebase.firestore().collection('profiles').doc(currentUser.email).onSnapshot(doc => {
-            profileData = doc.exists ? doc.data() : {};
-            applyNavPic();
-            // Invalidate cache so posts repaint
-            if (window.profileCache) delete window.profileCache[currentUser.email];
-            // Refresh profile view if open
-            const pv = document.getElementById('profile-view');
-            if (pv && pv.style.display !== 'none') renderProfilePage();
-        });
+    // ── Listen to own profile in realtime ────────────────────────────────────
+    function listenToMyProfile() {
+        firebase.firestore().collection('profiles').doc(myUser.email)
+            .onSnapshot(doc => {
+                myProfileData = doc.exists ? doc.data() : {};
+                // Keep cache in sync
+                if (window.profileCache) window.profileCache[myUser.email] = myProfileData;
+                // Refresh everywhere
+                refreshNavAvatar();
+                refreshCreateAvatar();
+                // Re-render profile page if visible
+                const pv = document.getElementById('profile-view');
+                if (pv && pv.style.display !== 'none') renderOwnProfile();
+            });
     }
 
-    // ── Nav profile picture ───────────────────────────────────────────────────
-    function applyNavPic() {
-        const el = document.getElementById('nav-profile-pic');
-        if (!el) return;
-        if (profileData.picUrl) {
-            el.style.backgroundImage = `url(${profileData.picUrl})`;
-            el.style.backgroundSize  = 'cover';
+    // ── Refresh nav avatar (mirrors app.js refreshNavAvatar) ─────────────────
+    function refreshNavAvatar() {
+        const el = document.getElementById('nav-avatar'); if (!el) return;
+        if (myProfileData.picUrl) {
+            el.style.backgroundImage    = `url(${myProfileData.picUrl})`;
+            el.style.backgroundSize     = 'cover';
             el.style.backgroundPosition = 'center';
             el.innerText = '';
         } else {
             el.style.backgroundImage = '';
-            el.innerText = currentUser.email[0].toUpperCase();
+            el.innerText = myUser.email[0].toUpperCase();
         }
     }
 
-    // ── Override profile view render ──────────────────────────────────────────
-    function overrideProfileView() {
-        // Hook into showView
-        const origShowView = window.showView;
-        window.showView = function(view) {
-            origShowView(view);
-            if (view === 'profile') renderProfilePage();
-        };
+    // ── Refresh create post avatar ────────────────────────────────────────────
+    function refreshCreateAvatar() {
+        const el = document.getElementById('create-avatar-pic'); if (!el) return;
+        if (myProfileData.picUrl) {
+            el.style.backgroundImage    = `url(${myProfileData.picUrl})`;
+            el.style.backgroundSize     = 'cover';
+            el.style.backgroundPosition = 'center';
+            el.innerText = '';
+        } else {
+            el.style.backgroundImage = '';
+            el.innerText = myUser.email[0].toUpperCase();
+        }
     }
 
-    function renderProfilePage() {
-        const card = document.querySelector('.profile-card');
-        if (!card) return;
+    // ── Exposed: called by app.js showView('profile') ────────────────────────
+    window.renderOwnProfile = function () {
+        const card = document.getElementById('profile-card'); if (!card) return;
+        const d    = myProfileData;
+        const banner = d.banner || BANNERS[0];
+
         card.innerHTML = '';
 
         // Banner
-        const banner = document.createElement('div');
-        banner.className = 'profile-banner';
-        banner.style.background = profileData.banner || BANNERS[0];
-        card.appendChild(banner);
+        const bannerEl = div('p-banner');
+        bannerEl.style.background = banner;
+        bannerEl.innerHTML = `<span class="p-banner-hint">🖼 Change banner</span>`;
+        bannerEl.onclick = openEditModal;
+        card.appendChild(bannerEl);
 
-        // Pic + edit button row
-        const picRow = document.createElement('div');
-        picRow.className = 'profile-pic-wrapper';
-
-        const bigAv = document.createElement('div');
-        bigAv.className = 'profile-avatar-big';
-        bigAv.id = 'profile-avatar-big';
-        if (profileData.picUrl) {
-            bigAv.style.backgroundImage = `url(${profileData.picUrl})`;
-            bigAv.style.backgroundSize  = 'cover';
-            bigAv.style.backgroundPosition = 'center';
+        // Avatar + edit button row
+        const topRow = div('p-top-row');
+        const avatar = div('p-avatar');
+        avatar.id = 'profile-avatar-big';
+        if (d.picUrl) {
+            avatar.style.backgroundImage    = `url(${d.picUrl})`;
+            avatar.style.backgroundSize     = 'cover';
+            avatar.style.backgroundPosition = 'center';
         } else {
-            bigAv.innerText = currentUser.email[0].toUpperCase();
+            avatar.innerText = myUser.email[0].toUpperCase();
         }
-        bigAv.onclick = () => openEditModal();
+        avatar.onclick = openEditModal;
 
-        const editBtn = document.createElement('button');
-        editBtn.className = 'profile-edit-btn';
-        editBtn.innerText = 'Edit Profile';
-        editBtn.onclick   = () => openEditModal();
+        const editBtn  = document.createElement('button');
+        editBtn.className = 'p-edit-btn'; editBtn.innerText = 'Edit Profile';
+        editBtn.onclick = openEditModal;
 
-        picRow.appendChild(bigAv);
-        picRow.appendChild(editBtn);
-        card.appendChild(picRow);
+        topRow.appendChild(avatar);
+        topRow.appendChild(editBtn);
+        card.appendChild(topRow);
 
-        // Info section
-        const info = document.createElement('div');
-        info.className = 'profile-info-section';
-
-        const nameEl = document.createElement('div');
-        nameEl.className = 'profile-display-name';
-        nameEl.id = 'profile-display-name';
-        nameEl.innerText = profileData.displayName || '';
-
-        const emailEl = document.createElement('div');
-        emailEl.className = 'profile-email';
-        emailEl.id = 'profile-email';
-        emailEl.innerText = currentUser.email;
-
-        const bioEl = document.createElement('div');
-        bioEl.className = 'profile-bio-display';
-        bioEl.id = 'profile-bio-display';
-        bioEl.innerText = profileData.bio || '';
-
-        info.appendChild(nameEl);
-        info.appendChild(emailEl);
-        info.appendChild(bioEl);
+        // Info block
+        const info = div('p-info');
+        info.innerHTML = `
+            <div class="p-name">${esc(d.displayName || myUser.email.split('@')[0])}</div>
+            <div class="p-handle">${esc(myUser.email)}</div>
+            ${d.bio ? `<div class="p-bio">${esc(d.bio)}</div>` : ''}
+            ${d.website ? `<div class="p-links"><span class="p-link-tag">🔗 ${esc(d.website)}</span></div>` : ''}
+        `;
         card.appendChild(info);
 
-        // Stats
-        const statsEl = document.createElement('div');
-        statsEl.className = 'profile-stats';
-        statsEl.id = 'profile-stats';
-        card.appendChild(statsEl);
+        // Tab bar
+        const tabBar = div('p-tab-bar');
+        tabBar.innerHTML = `
+            <button class="p-tab active" onclick="switchProfileTab('posts',this)">Posts</button>
+            <button class="p-tab" onclick="switchProfileTab('bookmarks',this)">Saved</button>
+        `;
+        card.appendChild(tabBar);
 
-        // Posts
-        const postsEl = document.createElement('div');
-        postsEl.className = 'profile-posts';
-        postsEl.id = 'profile-posts';
-        card.appendChild(postsEl);
+        // Stats (inline, between tabs and content)
+        const statsRow = div('p-stats-row');
+        statsRow.id = 'p-stats-row';
+        card.appendChild(statsRow);
 
-        // Sign out
-        const signOut = document.createElement('div');
-        signOut.style.padding = '0 18px 20px';
-        signOut.innerHTML = '<button class="btn btn-outline" onclick="logout()" style="width:100%">Sign Out</button>';
-        card.appendChild(signOut);
+        // Content area
+        const content = div('');
+        content.id = 'p-content';
+        card.appendChild(content);
 
-        // Load stats & posts via the original loadProfile logic
+        // Actions
+        const actions = div('p-actions');
+        actions.innerHTML = `<button class="btn btn-ghost btn-sm" style="border-radius:8px;padding:9px 16px;width:100%" onclick="logout()">Sign Out</button>`;
+        card.appendChild(actions);
+
         loadProfileStats();
-    }
+        loadProfilePosts();
+    };
+
+    window.switchProfileTab = function(tab, btn) {
+        document.querySelectorAll('.p-tab').forEach(t => t.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+        if (tab === 'posts') loadProfilePosts();
+        else loadProfileBookmarks();
+    };
 
     function loadProfileStats() {
-        firebase.firestore().collection('posts').where('uid', '==', currentUser.uid).get().then(snap => {
+        const statsEl = document.getElementById('p-stats-row'); if (!statsEl) return;
+        firebase.firestore().collection('posts').where('uid','==',myUser.uid).get().then(snap => {
             let likes = 0, views = 0;
-            const posts = [];
-            snap.forEach(doc => {
-                const d = doc.data();
-                likes += d.likes || 0; views += d.views || 0; posts.push(d);
-            });
-            const statsEl = document.getElementById('profile-stats');
-            if (statsEl) statsEl.innerHTML = `
-                <div class="profile-stat"><div class="profile-stat-num">${snap.size}</div><div class="profile-stat-label">Posts</div></div>
-                <div class="profile-stat"><div class="profile-stat-num">${likes}</div><div class="profile-stat-label">Likes</div></div>
-                <div class="profile-stat"><div class="profile-stat-num">${views}</div><div class="profile-stat-label">Views</div></div>
+            snap.forEach(d => { likes += d.data().likes||0; views += d.data().views||0; });
+            statsEl.innerHTML = `
+                <div class="p-stat"><div class="p-stat-n">${snap.size}</div><div class="p-stat-l">Posts</div></div>
+                <div class="p-stat"><div class="p-stat-n">${likes}</div><div class="p-stat-l">Likes</div></div>
+                <div class="p-stat"><div class="p-stat-n">${views}</div><div class="p-stat-l">Views</div></div>
             `;
-            const postsEl = document.getElementById('profile-posts');
-            if (!postsEl) return;
-            if (!posts.length) { postsEl.innerHTML = ''; return; }
-            postsEl.innerHTML = '<h4>Your Posts</h4>' + posts.slice(0, 5).map(p =>
-                `<div class="profile-mini-post">${(p.text || '').substring(0, 80)}${p.text?.length > 80 ? '…' : ''}</div>`
-            ).join('');
         });
     }
 
-    // ── Edit Modal ────────────────────────────────────────────────────────────
-    function openEditModal() {
-        if (document.getElementById('profile-edit-modal')) return;
-        pendingPicDataUrl = null;
+    function loadProfilePosts() {
+        const content = document.getElementById('p-content'); if (!content) return;
+        content.innerHTML = `<div class="loading-state" style="padding:20px">Loading…</div>`;
+        firebase.firestore().collection('posts')
+            .where('uid','==',myUser.uid)
+            .orderBy('createdAt','desc')
+            .get().then(snap => {
+                if (snap.empty) {
+                    content.innerHTML = `<div class="empty-state" style="padding:30px 20px"><div class="ei">📝</div><p>No posts yet</p></div>`;
+                    return;
+                }
+                content.innerHTML = '<div class="p-section-title">Your Posts</div>';
+                snap.forEach(doc => {
+                    const p = doc.data();
+                    const m = div('p-mini-post');
+                    m.innerHTML = `
+                        <div style="font-size:.82rem;color:#94a3b8;margin-bottom:5px;display:flex;justify-content:space-between">
+                            <span>${p.likes||0} ❤️  ${p.views||0} 👁</span>
+                            <span>${p.createdAt ? timeAgoLocal(p.createdAt) : ''}</span>
+                        </div>
+                        <div>${esc((p.text||'').substring(0,120))}${(p.text||'').length>120?'…':''}</div>
+                        ${(p.imageDataUrl||p.imageUrl) ? `<img class="p-mini-post-img" src="${p.imageDataUrl||p.imageUrl}" loading="lazy">` : ''}
+                    `;
+                    content.appendChild(m);
+                });
+            });
+    }
 
+    function loadProfileBookmarks() {
+        const content = document.getElementById('p-content'); if (!content) return;
+        content.innerHTML = `<div class="loading-state" style="padding:20px">Loading…</div>`;
+        firebase.firestore().collection('posts')
+            .where('bookmarks','array-contains',myUser.uid)
+            .orderBy('createdAt','desc')
+            .get().then(snap => {
+                if (snap.empty) {
+                    content.innerHTML = `<div class="empty-state" style="padding:30px 20px"><div class="ei">🔖</div><p>No saved posts yet</p></div>`;
+                    return;
+                }
+                content.innerHTML = '<div class="p-section-title">Saved Posts</div>';
+                snap.forEach(doc => {
+                    const p = doc.data();
+                    const m = div('p-bookmark-item');
+                    m.innerHTML = `
+                        <div>${esc((p.text||'').substring(0,120))}${(p.text||'').length>120?'…':''}</div>
+                        <div class="p-bookmark-meta">by ${esc(p.email)} · ${p.createdAt?timeAgoLocal(p.createdAt):''}</div>
+                    `;
+                    content.appendChild(m);
+                });
+            }).catch(() => {
+                // Index not ready — fetch without order
+                firebase.firestore().collection('posts')
+                    .where('bookmarks','array-contains',myUser.uid)
+                    .get().then(snap => {
+                        if (snap.empty) {
+                            content.innerHTML = `<div class="empty-state" style="padding:30px 20px"><div class="ei">🔖</div><p>No saved posts yet</p></div>`;
+                            return;
+                        }
+                        content.innerHTML = '<div class="p-section-title">Saved Posts</div>';
+                        snap.forEach(doc => {
+                            const p = doc.data();
+                            const m = div('p-bookmark-item');
+                            m.innerHTML = `<div>${esc((p.text||'').substring(0,120))}</div><div class="p-bookmark-meta">by ${esc(p.email)}</div>`;
+                            content.appendChild(m);
+                        });
+                    });
+            });
+    }
+
+    // ── EDIT MODAL ────────────────────────────────────────────────────────────
+    window.openEditModal = function () {
+        if (document.getElementById('profile-edit-modal')) return;
+        pendingPic = null;
+
+        const d     = myProfileData;
         const modal = document.createElement('div');
-        modal.id = 'profile-edit-modal';
+        modal.id    = 'profile-edit-modal';
+
         modal.innerHTML = `
-            <div class="profile-edit-sheet">
-                <div class="edit-sheet-header">
+            <div class="pe-sheet">
+                <div class="pe-header">
                     <h3>Edit Profile</h3>
-                    <button class="edit-sheet-close" onclick="document.getElementById('profile-edit-modal').remove()">✕</button>
+                    <button class="pe-close" id="pe-close-btn">✕</button>
                 </div>
 
-                <!-- Profile picture -->
-                <div class="edit-pic-row">
-                    <div class="edit-pic-preview" id="edit-pic-preview"></div>
-                    <div class="edit-pic-btns">
-                        <button class="edit-pic-upload-btn" onclick="document.getElementById('profile-pic-file').click()">📷 Change Photo</button>
-                        <button class="edit-pic-remove-btn" onclick="removePic()">Remove Photo</button>
-                        <input type="file" id="profile-pic-file" accept="image/*" style="display:none" onchange="handlePicFile(this)">
+                <!-- Avatar -->
+                <div class="pe-pic-row">
+                    <div class="pe-pic-prev" id="pe-pic-prev"></div>
+                    <div class="pe-pic-actions">
+                        <button class="pe-upload-btn" id="pe-upload-btn">📷 Change Photo</button>
+                        <button class="pe-remove-btn" id="pe-remove-btn">Remove Photo</button>
+                        <input type="file" id="pe-file" accept="image/*" style="display:none">
                     </div>
                 </div>
 
                 <!-- Display name -->
-                <div class="edit-field-label">Display Name</div>
-                <input class="edit-field-input" id="edit-display-name" placeholder="Your name" maxlength="40" value="${escHtml(profileData.displayName || '')}">
+                <div class="pe-label">Display Name</div>
+                <input class="pe-input" id="pe-name" placeholder="Your name" maxlength="40" value="${esc(d.displayName||'')}">
 
                 <!-- Bio -->
-                <div class="edit-field-label">Bio</div>
-                <textarea class="edit-field-textarea" id="edit-bio" placeholder="Tell people a bit about yourself..." maxlength="160">${escHtml(profileData.bio || '')}</textarea>
+                <div class="pe-label">Bio</div>
+                <textarea class="pe-textarea" id="pe-bio" placeholder="Tell people about yourself…" maxlength="200">${esc(d.bio||'')}</textarea>
 
-                <!-- Banner colour -->
-                <div class="banner-colour-label">Banner Colour</div>
-                <div class="banner-colour-grid" id="banner-colour-grid"></div>
+                <!-- Website -->
+                <div class="pe-label">Website / Link</div>
+                <input class="pe-input" id="pe-website" placeholder="yourwebsite.com" maxlength="80" value="${esc(d.website||'')}">
 
-                <button class="edit-save-btn" onclick="saveProfile()">Save Changes</button>
-                <div class="edit-status" id="edit-status"></div>
+                <!-- Banner -->
+                <div class="pe-banner-label">Banner Colour</div>
+                <div class="pe-swatches" id="pe-swatches"></div>
+
+                <button class="pe-save-btn" id="pe-save-btn">Save Changes</button>
+                <div class="pe-status" id="pe-status"></div>
             </div>
         `;
 
         document.body.appendChild(modal);
-        modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 
-        // Set preview pic
-        updateEditPreview();
+        // Wire up close
+        document.getElementById('pe-close-btn').onclick = closeEditModal;
+        modal.addEventListener('click', e => { if (e.target === modal) closeEditModal(); });
 
-        // Render banner swatches
-        const grid = document.getElementById('banner-colour-grid');
-        BANNERS.forEach((b, i) => {
+        // Pic preview
+        syncPicPreview();
+
+        // File input
+        const fileInput = document.getElementById('pe-file');
+        document.getElementById('pe-upload-btn').onclick = () => fileInput.click();
+        fileInput.onchange = () => { handlePicFile(fileInput.files[0]); };
+
+        document.getElementById('pe-remove-btn').onclick = () => {
+            pendingPic = '__remove__';
+            syncPicPreview();
+        };
+
+        // Banner swatches
+        const grid = document.getElementById('pe-swatches');
+        const currentBanner = d.banner || BANNERS[0];
+        BANNERS.forEach(b => {
             const sw = document.createElement('div');
-            sw.className = 'banner-swatch' + ((profileData.banner || BANNERS[0]) === b ? ' selected' : '');
+            sw.className  = 'pe-swatch' + (b === currentBanner ? ' sel' : '');
             sw.style.background = b;
-            sw.dataset.banner = b;
-            sw.onclick = () => {
-                document.querySelectorAll('.banner-swatch').forEach(s => s.classList.remove('selected'));
-                sw.classList.add('selected');
+            sw.dataset.b  = b;
+            sw.onclick    = () => {
+                grid.querySelectorAll('.pe-swatch').forEach(s => s.classList.remove('sel'));
+                sw.classList.add('sel');
             };
             grid.appendChild(sw);
         });
+
+        // Save
+        document.getElementById('pe-save-btn').onclick = saveProfile;
+    };
+
+    function closeEditModal() {
+        document.getElementById('profile-edit-modal')?.remove();
+        pendingPic = null;
     }
 
-    function updateEditPreview() {
-        const prev = document.getElementById('edit-pic-preview');
-        if (!prev) return;
-        const src = pendingPicDataUrl || profileData.picUrl || '';
-        if (src) {
-            prev.style.backgroundImage = `url(${src})`;
-            prev.style.backgroundSize  = 'cover';
+    function syncPicPreview() {
+        const prev = document.getElementById('pe-pic-prev'); if (!prev) return;
+        const src  = (pendingPic && pendingPic !== '__remove__') ? pendingPic : (myProfileData.picUrl || '');
+        const remove = pendingPic === '__remove__';
+        if (src && !remove) {
+            prev.style.backgroundImage    = `url(${src})`;
+            prev.style.backgroundSize     = 'cover';
             prev.style.backgroundPosition = 'center';
             prev.innerText = '';
         } else {
             prev.style.backgroundImage = '';
-            prev.innerText = currentUser.email[0].toUpperCase();
+            prev.innerText = myUser.email[0].toUpperCase();
         }
     }
 
-    window.handlePicFile = function(input) {
-        const file = input.files[0]; if (!file) return;
-        compressForProfile(file).then(dataUrl => {
-            pendingPicDataUrl = dataUrl;
-            updateEditPreview();
+    function handlePicFile(file) {
+        if (!file) return;
+        compressAvatar(file).then(url => {
+            pendingPic = url;
+            syncPicPreview();
         }).catch(e => alert('Could not load image: ' + e.message));
-    };
+    }
 
-    window.removePic = function() {
-        pendingPicDataUrl = '__remove__';
-        const prev = document.getElementById('edit-pic-preview');
-        if (prev) {
-            prev.style.backgroundImage = '';
-            prev.innerText = currentUser.email[0].toUpperCase();
-        }
-    };
+    async function saveProfile() {
+        const btn    = document.getElementById('pe-save-btn');
+        const status = document.getElementById('pe-status');
+        const name   = document.getElementById('pe-name')?.value.trim()    || '';
+        const bio    = document.getElementById('pe-bio')?.value.trim()     || '';
+        const site   = document.getElementById('pe-website')?.value.trim() || '';
+        const selSw  = document.querySelector('.pe-swatch.sel');
+        const banner = selSw ? selSw.dataset.b : (myProfileData.banner || BANNERS[0]);
 
-    window.saveProfile = async function() {
-        const btn      = document.querySelector('.edit-save-btn');
-        const statusEl = document.getElementById('edit-status');
-        const name     = (document.getElementById('edit-display-name')?.value || '').trim();
-        const bio      = (document.getElementById('edit-bio')?.value || '').trim();
-        const selected = document.querySelector('.banner-swatch.selected');
-        const banner   = selected ? selected.dataset.banner : (profileData.banner || BANNERS[0]);
-
-        btn.disabled = true; btn.innerText = 'Saving...';
-        statusEl.innerText = ''; statusEl.style.color = '#94a3b8';
+        btn.disabled = true; btn.innerText = 'Saving…';
+        if (status) { status.innerText = ''; }
 
         try {
             const update = {
-                displayName: name,
-                bio:         bio,
-                banner:      banner,
-                email:       currentUser.email,
-                updatedAt:   firebase.firestore.FieldValue.serverTimestamp()
+                displayName: name, bio, website: site, banner,
+                email: myUser.email,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
-            if (pendingPicDataUrl === '__remove__') {
+            if (pendingPic === '__remove__') {
                 update.picUrl = '';
-            } else if (pendingPicDataUrl) {
-                update.picUrl = pendingPicDataUrl;
+            } else if (pendingPic) {
+                update.picUrl = pendingPic;
             }
 
-            await firebase.firestore().collection('profiles').doc(currentUser.email).set(update, { merge: true });
+            await firebase.firestore().collection('profiles').doc(myUser.email).set(update, { merge: true });
 
-            // Update local cache
-            profileData = { ...profileData, ...update };
-            if (window.profileCache) window.profileCache[currentUser.email] = profileData;
+            // Update local cache immediately
+            myProfileData = { ...myProfileData, ...update };
+            if (window.profileCache) window.profileCache[myUser.email] = myProfileData;
 
-            statusEl.innerText = '✓ Saved!'; statusEl.style.color = '#22c55e';
-            setTimeout(() => {
-                document.getElementById('profile-edit-modal')?.remove();
-                renderProfilePage();
-                applyNavPic();
-            }, 700);
+            if (status) { status.innerText = '✓ Saved!'; status.style.color = '#22c55e'; }
+
+            // Tell app.js
+            if (typeof window.onProfileSaved === 'function') window.onProfileSaved();
+
+            setTimeout(closeEditModal, 700);
         } catch (e) {
-            statusEl.innerText = 'Error: ' + e.message; statusEl.style.color = '#ef4444';
+            if (status) { status.innerText = 'Error: ' + e.message; status.style.color = '#ef4444'; }
         }
 
         btn.disabled = false; btn.innerText = 'Save Changes';
-    };
+    }
 
-    // ── Compress profile pic — smaller than post images ───────────────────────
-    function compressForProfile(file) {
+    // ── Avatar compression (square crop, 200×200) ─────────────────────────────
+    function compressAvatar(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onerror = () => reject(new Error('Read failed'));
-            reader.onload = e => {
+            reader.onload  = e => {
                 const img = new Image();
                 img.onerror = () => reject(new Error('Decode failed'));
-                img.onload = () => {
-                    const size   = 200; // square crop
-                    const canvas = document.createElement('canvas');
-                    canvas.width = size; canvas.height = size;
-                    const ctx = canvas.getContext('2d');
-                    // Centre-crop
-                    const s  = Math.min(img.width, img.height);
-                    const sx = (img.width  - s) / 2;
-                    const sy = (img.height - s) / 2;
+                img.onload  = () => {
+                    const size = 220;
+                    const c    = document.createElement('canvas');
+                    c.width = size; c.height = size;
+                    const ctx = c.getContext('2d');
+                    const s   = Math.min(img.width, img.height);
+                    const sx  = (img.width  - s) / 2;
+                    const sy  = (img.height - s) / 2;
                     ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
-                    resolve(canvas.toDataURL('image/jpeg', 0.82));
+                    resolve(c.toDataURL('image/jpeg', 0.84));
                 };
                 img.src = e.target.result;
             };
@@ -545,8 +623,27 @@
         });
     }
 
-    function escHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function div(cls) {
+        const el = document.createElement('div');
+        if (cls) el.className = cls;
+        return el;
+    }
+
+    function esc(s) {
+        return String(s || '')
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function timeAgoLocal(ts) {
+        if (!ts || !ts.toMillis) return '';
+        const s = Math.floor((Date.now() - ts.toMillis()) / 1000);
+        if (s < 60)     return 'just now';
+        if (s < 3600)   return Math.floor(s/60)    + 'm ago';
+        if (s < 86400)  return Math.floor(s/3600)  + 'h ago';
+        if (s < 604800) return Math.floor(s/86400) + 'd ago';
+        return new Date(ts.toMillis()).toLocaleDateString();
     }
 
 })();
