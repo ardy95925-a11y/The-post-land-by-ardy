@@ -1,156 +1,160 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <title>Post Land</title>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <title>Post Land</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <!-- AUTH -->
-<div id="auth-overlay">
-    <div class="auth-card">
-        <div class="auth-logo">🌍</div>
-        <h2>Post Land</h2>
-        <p class="auth-sub">Share your world</p>
-        <input type="email"    id="auth-email" placeholder="Email address"  autocomplete="email">
-        <input type="password" id="auth-pass"  placeholder="Password"       autocomplete="current-password">
-        <button class="btn"          onclick="handleAuth('login')">Sign In</button>
-        <button class="btn btn-ghost" onclick="handleAuth('signup')">Create Account</button>
-        <p id="auth-error"></p>
-    </div>
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-globe">🌍</div>
+    <h1>Post Land</h1>
+    <p class="auth-tagline">Share your world with everyone</p>
+    <input type="email"    id="auth-email" placeholder="Email address"  autocomplete="email">
+    <input type="password" id="auth-pass"  placeholder="Password"       autocomplete="current-password">
+    <button class="btn-blue"  onclick="handleAuth('login')">Sign In</button>
+    <button class="btn-ghost" onclick="handleAuth('signup')">Create Account</button>
+    <p id="auth-msg" class="auth-msg"></p>
+  </div>
 </div>
 
 <!-- NAV -->
 <nav>
-    <div class="nav-brand" onclick="showView('feed')">
-        <span class="nav-logo">🌍</span> Post Land
-    </div>
-    <div class="nav-links">
-        <button class="nav-btn" data-view="feed"    onclick="showView('feed')"    title="Feed">
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        </button>
-        <button class="nav-btn" data-view="create"  onclick="showView('create')"  title="New Post">
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-        </button>
-        <button class="nav-btn" data-view="dm"      onclick="showView('dm')"      title="Messages">
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-            <span id="unread-badge" class="unread-badge hidden"></span>
-        </button>
-        <button class="nav-btn" data-view="search"  onclick="showView('search')"  title="Search">
-            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        </button>
-        <button class="nav-btn" data-view="profile" onclick="showView('profile')" title="Profile">
-            <div id="nav-avatar" class="nav-avatar"></div>
-        </button>
-    </div>
+  <button class="nav-logo" onclick="showView('feed')">🌍 <span>Post Land</span></button>
+  <div class="nav-right">
+    <button class="nav-tab" data-v="feed"    onclick="showView('feed')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    </button>
+    <button class="nav-tab" data-v="new"     onclick="showView('new')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="4"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    </button>
+    <button class="nav-tab" data-v="msgs"    onclick="showView('msgs')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      <span id="msg-dot" class="msg-dot hidden"></span>
+    </button>
+    <button class="nav-tab" data-v="search"  onclick="showView('search')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </button>
+    <button class="nav-tab" data-v="profile" onclick="showView('profile')">
+      <div id="nav-pic" class="nav-pic"></div>
+    </button>
+  </div>
 </nav>
 
-<div class="container">
+<!-- VIEWS -->
+<main>
 
-    <!-- FEED -->
-    <div id="feed-view">
-        <div id="announcement-area"></div>
-        <div id="posts-list"><div class="skeleton-list">
-            <div class="skeleton-post"></div>
-            <div class="skeleton-post"></div>
-            <div class="skeleton-post"></div>
-        </div></div>
+  <!-- FEED -->
+  <section id="v-feed" class="view on">
+    <div id="ann-wrap"></div>
+    <div id="trending-wrap"></div>
+    <div id="feed-list">
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
+      <div class="skeleton-card"></div>
     </div>
+  </section>
 
-    <!-- CREATE -->
-    <div id="create-view">
-        <div class="create-card">
-            <div class="create-header">
-                <div id="create-avatar-pic" class="create-avatar-pic"></div>
-                <textarea id="post-text" placeholder="What's on your mind?" maxlength="300"></textarea>
-            </div>
-            <div id="image-preview-wrap" class="hidden">
-                <img id="image-preview" alt="Preview">
-                <button class="remove-img-btn" onclick="removeImage()">✕</button>
-            </div>
-            <input type="text" id="post-tags" placeholder="# Add tags (comma separated)" class="tags-input">
-            <div class="create-toolbar">
-                <div class="create-tools">
-                    <label for="post-image" class="tool-btn" title="Add photo">
-                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                        Photo
-                    </label>
-                    <input type="file" id="post-image" accept="image/*">
-                </div>
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <span id="char-counter" class="char-counter">300</span>
-                    <button class="btn publish-btn" id="upload-btn" onclick="uploadPost()">Post</button>
-                </div>
-            </div>
-            <p id="upload-status" class="upload-status"></p>
+  <!-- NEW POST -->
+  <section id="v-new" class="view">
+    <div class="compose-card">
+      <div class="compose-top">
+        <div id="compose-pic" class="av av40"></div>
+        <textarea id="post-body" placeholder="What's on your mind?" maxlength="300"></textarea>
+      </div>
+      <div id="post-img-preview" class="hidden">
+        <img id="post-img-el" alt="">
+        <button class="img-x" onclick="clearPostImg()">✕</button>
+      </div>
+      <input id="post-tags-in" class="tags-in" placeholder="Tags (comma separated)">
+      <div class="compose-foot">
+        <label class="compose-media">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="17" height="17"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          Photo
+          <input type="file" id="post-file" accept="image/*" hidden>
+        </label>
+        <div class="compose-right">
+          <span id="chars-left" class="chars-left">300</span>
+          <button class="btn-blue pill" id="post-submit" onclick="submitPost()">Post</button>
         </div>
+      </div>
+      <p id="post-err" class="post-err"></p>
     </div>
+  </section>
 
-    <!-- DMs -->
-    <div id="dm-view">
-        <div id="dm-inbox-view">
-            <div class="page-header">
-                <h2>Messages</h2>
-                <button class="icon-btn" onclick="showNewMessageModal()" title="New message">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="12" y1="10" x2="12" y2="14"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-                </button>
-            </div>
-            <div id="inbox-list"></div>
-        </div>
-        <div id="dm-chat-view" class="hidden">
-            <div class="chat-topbar">
-                <button class="back-btn" onclick="closeChatView()">
-                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-                </button>
-                <div class="chat-peer-info" id="chat-peer-info">
-                    <div class="chat-topbar-avatar" id="chat-topbar-avatar"></div>
-                    <div>
-                        <div class="chat-topbar-name"   id="chat-topbar-name"></div>
-                        <div class="chat-topbar-status" id="chat-topbar-status"></div>
-                    </div>
-                </div>
-            </div>
-            <div id="msg-box"></div>
-            <div class="chat-input-bar">
-                <button class="chat-attach-btn" onclick="document.getElementById('dm-img-input').click()">
-                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                </button>
-                <input type="file" id="dm-img-input" accept="image/*" onchange="sendImageDM(this)">
-                <input type="text" id="msg-input" placeholder="Message...">
-                <button class="chat-send-btn" onclick="sendDM()">
-                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
-                </button>
-            </div>
-        </div>
+  <!-- MESSAGES -->
+  <section id="v-msgs" class="view">
+    <div id="msgs-inbox">
+      <div class="view-head">
+        <h2>Messages</h2>
+        <button class="icon-btn" onclick="openNewMsg()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+      </div>
+      <div id="inbox-list"></div>
     </div>
-
-    <!-- SEARCH -->
-    <div id="search-view">
-        <div class="page-header"><h2>Search</h2></div>
-        <div class="search-box-wrap">
-            <svg class="search-icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="search-input" class="search-input" placeholder="Search posts or people..." oninput="runSearch(this.value)">
+    <div id="msgs-chat" class="hidden">
+      <div class="chat-topbar">
+        <button class="back-btn" onclick="closeChat()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="20" height="20"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="chat-who">
+          <div id="chat-av" class="av av36"></div>
+          <div>
+            <div id="chat-name"   class="chat-name"></div>
+            <div id="chat-status" class="chat-status"></div>
+          </div>
         </div>
-        <div id="search-results"></div>
+      </div>
+      <div id="msg-list"></div>
+      <div class="chat-input-row">
+        <button class="attach-btn" onclick="document.getElementById('chat-img-file').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </button>
+        <input id="chat-img-file" type="file" accept="image/*" hidden onchange="sendImgMsg(this)">
+        <input id="chat-input" class="chat-field" placeholder="Message…">
+        <button class="send-btn" onclick="sendMsg()">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+        </button>
+      </div>
     </div>
+  </section>
 
-    <!-- PROFILE -->
-    <div id="profile-view">
-        <div class="profile-card" id="profile-card">
-            <!-- Fully rendered by profiles.js → renderOwnProfile() -->
-        </div>
+  <!-- SEARCH -->
+  <section id="v-search" class="view">
+    <div class="view-head"><h2>Explore</h2></div>
+    <div class="search-bar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-ico"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="search-in" class="search-input" placeholder="Search posts, people, #tags…" oninput="doSearch(this.value)">
     </div>
+    <div id="search-out"></div>
+  </section>
 
-</div><!-- /container -->
+  <!-- PROFILE -->
+  <section id="v-profile" class="view">
+    <div id="profile-wrap"></div>
+  </section>
+
+</main>
+
+<!-- Lightbox -->
+<div id="lightbox" class="lightbox hidden" onclick="this.classList.add('hidden')">
+  <img id="lightbox-img" alt="">
+</div>
+
+<div id="toast-host"></div>
 
 <script src="app.js"></script>
-<script src="extras.js"></script>
 <script src="profiles.js"></script>
+<script src="extras.js"></script>
 </body>
 </html>
