@@ -19,6 +19,8 @@ let messageListener  = null;
 let inboxListener    = null;
 let typingTimeout    = null;
 
+const OWNER_EMAIL = 'oleksandr.lahoza.24@phcol.ie';
+
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function handleAuth(type) {
     const email   = document.getElementById('auth-email').value.trim();
@@ -37,14 +39,12 @@ auth.onAuthStateChanged(user => {
     if (user) {
         currentUser = user;
         document.getElementById('auth-overlay').style.display = 'none';
-        // Set avatar initials
-        const initial = user.email[0].toUpperCase();
-        const ca = document.getElementById('create-avatar');
-        if (ca) ca.innerText = initial;
         showView('feed');
         loadPosts();
         listenInbox();
         setOnlinePresence(user);
+        initAdmin(user);
+        loadAnnouncementBanner();
     } else {
         document.getElementById('auth-overlay').style.display = 'flex';
     }
@@ -82,14 +82,13 @@ document.getElementById('post-text').addEventListener('input', function () {
     counter.style.color = remaining < 20 ? '#ef4444' : '#94a3b8';
 });
 
-// ── TAGS INPUT TOGGLE ─────────────────────────────────────────────────────────
 function focusTags() {
     const t = document.getElementById('post-tags');
     t.classList.remove('hidden');
     t.focus();
 }
 
-// ── IMAGE HANDLING ────────────────────────────────────────────────────────────
+// ── IMAGE COMPRESSION ─────────────────────────────────────────────────────────
 function compressImage(file, maxWidth, quality) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -152,7 +151,6 @@ async function uploadPost() {
 
     if (!text) { setStatus('Please write something!', '#ef4444'); return; }
     btn.disabled = true; btn.innerText = 'Publishing...';
-    setStatus('', '#94a3b8');
 
     try {
         let imageDataUrl = '';
@@ -185,11 +183,42 @@ async function uploadPost() {
 function timeAgo(ts) {
     if (!ts) return '';
     const s = Math.floor((Date.now() - ts.toMillis()) / 1000);
-    if (s < 60)    return 'just now';
-    if (s < 3600)  return Math.floor(s / 60)   + 'm ago';
-    if (s < 86400) return Math.floor(s / 3600)  + 'h ago';
+    if (s < 60)     return 'just now';
+    if (s < 3600)   return Math.floor(s / 60)    + 'm ago';
+    if (s < 86400)  return Math.floor(s / 3600)  + 'h ago';
     if (s < 604800) return Math.floor(s / 86400) + 'd ago';
     return new Date(ts.toMillis()).toLocaleDateString();
+}
+
+// ── RENDER AVATAR (used by posts + profile) ───────────────────────────────────
+// Returns either an <img> tag if user has a profile pic, or a coloured initial
+function renderAvatarEl(email, size, picUrl) {
+    const el = document.createElement('div');
+    el.className = 'avatar post-avatar';
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+    el.style.fontSize = (size * 0.38) + 'px';
+    if (picUrl) {
+        el.style.backgroundImage = `url(${picUrl})`;
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center';
+        el.style.backgroundRepeat = 'no-repeat';
+    } else {
+        el.innerText = (email || '?')[0].toUpperCase();
+    }
+    return el;
+}
+
+// Cache of profile data so we don't spam Firestore
+const profileCache = {};
+
+function getProfile(email) {
+    if (profileCache[email]) return Promise.resolve(profileCache[email]);
+    return db.collection('profiles').doc(email).get().then(doc => {
+        const data = doc.exists ? doc.data() : {};
+        profileCache[email] = data;
+        return data;
+    });
 }
 
 // ── LOAD POSTS ────────────────────────────────────────────────────────────────
@@ -207,18 +236,22 @@ function loadPosts() {
             const likedBy  = post.likedBy || [];
             const hasLiked = likedBy.includes(currentUser.uid);
             const imgSrc   = post.imageDataUrl || post.imageUrl || '';
-            const initial  = (post.email || '?')[0].toUpperCase();
+            const isOwner  = post.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
 
             const div = document.createElement('div');
             div.className = 'post';
+
+            // Build post shell first, then hydrate avatar async
             div.innerHTML = `
                 <div class="post-header">
-                    <div class="avatar post-avatar">${initial}</div>
+                    <div class="post-avatar-wrap" id="pav-${doc.id}"></div>
                     <div class="post-header-info">
                         <div class="post-author ${isOwn ? '' : 'clickable'}"
                              onclick="${isOwn ? '' : `startChat('${post.email}')`}">
                             ${post.email}
-                            ${isOwn ? '<span style="font-size:0.7rem;color:#94a3b8;font-weight:400">(you)</span>' : ''}
+                            ${isOwner ? '<span class="owner-badge">👑 Owner</span>' : ''}
+                            <span class="admin-badge-placeholder" data-email="${post.email}"></span>
+                            ${isOwn ? '<span style="font-size:0.7rem;color:#94a3b8;font-weight:400;margin-left:4px">(you)</span>' : ''}
                         </div>
                         <div class="post-time">${timeAgo(post.createdAt)}</div>
                     </div>
@@ -240,7 +273,26 @@ function loadPosts() {
                     ${!isOwn ? `<button class="action-btn" onclick="startChat('${post.email}')">✉️ Message</button>` : ''}
                     ${isOwn  ? `<button class="action-btn delete-btn" onclick="deletePost('${doc.id}')">🗑 Delete</button>` : ''}
                 </div>`;
+
             list.appendChild(div);
+
+            // Async: load profile pic + admin badge
+            getProfile(post.email).then(profile => {
+                const wrap = div.querySelector(`#pav-${doc.id}`);
+                if (wrap) {
+                    const avatarEl = renderAvatarEl(post.email, 38, profile.picUrl || '');
+                    wrap.appendChild(avatarEl);
+                }
+                // Admin badge
+                if (!isOwner) {
+                    db.collection('admins').doc(post.email).get().then(adoc => {
+                        const placeholder = div.querySelector(`.admin-badge-placeholder[data-email="${post.email}"]`);
+                        if (adoc.exists && placeholder) {
+                            placeholder.outerHTML = '<span class="admin-badge">🛡 Admin</span>';
+                        }
+                    });
+                }
+            });
         });
     });
 }
@@ -266,11 +318,27 @@ async function deletePost(id) {
 
 // ── PROFILE VIEW ──────────────────────────────────────────────────────────────
 function loadProfile() {
-    const email   = currentUser.email;
-    const initial = email[0].toUpperCase();
+    const email = currentUser.email;
+    document.getElementById('profile-email').innerText = email;
 
-    document.getElementById('profile-avatar-big').innerText = initial;
-    document.getElementById('profile-email').innerText      = email;
+    // Load profile data (populated by profiles.js)
+    getProfile(email).then(profile => {
+        const bigAv = document.getElementById('profile-avatar-big');
+        if (bigAv) {
+            if (profile.picUrl) {
+                bigAv.style.backgroundImage = `url(${profile.picUrl})`;
+                bigAv.style.backgroundSize  = 'cover';
+                bigAv.style.backgroundPosition = 'center';
+                bigAv.innerText = '';
+            } else {
+                bigAv.innerText = email[0].toUpperCase();
+            }
+        }
+        const nameEl = document.getElementById('profile-display-name');
+        if (nameEl) nameEl.innerText = profile.displayName || '';
+        const bioEl = document.getElementById('profile-bio-display');
+        if (bioEl) bioEl.innerText = profile.bio || '';
+    });
 
     db.collection('posts').where('uid', '==', currentUser.uid).get().then(snap => {
         let totalLikes = 0, totalViews = 0;
@@ -281,13 +349,11 @@ function loadProfile() {
             totalViews += d.views || 0;
             posts.push(d);
         });
-
         document.getElementById('profile-stats').innerHTML = `
             <div class="profile-stat"><div class="profile-stat-num">${snap.size}</div><div class="profile-stat-label">Posts</div></div>
             <div class="profile-stat"><div class="profile-stat-num">${totalLikes}</div><div class="profile-stat-label">Likes</div></div>
             <div class="profile-stat"><div class="profile-stat-num">${totalViews}</div><div class="profile-stat-label">Views</div></div>
         `;
-
         const postsEl = document.getElementById('profile-posts');
         if (!posts.length) { postsEl.innerHTML = ''; return; }
         postsEl.innerHTML = '<h4>Your Posts</h4>' + posts.slice(0, 5).map(p =>
@@ -297,49 +363,52 @@ function loadProfile() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// DM SYSTEM — completely rebuilt from scratch
+// DM SYSTEM
 // ══════════════════════════════════════════════════════════════════════════════
-
 function getChatId(a, b) { return [a, b].sort().join('__'); }
 
-// ── INBOX ─────────────────────────────────────────────────────────────────────
 function listenInbox() {
     if (inboxListener) { inboxListener(); inboxListener = null; }
-
     inboxListener = db.collection('conversations')
         .where('members', 'array-contains', currentUser.email)
         .orderBy('lastAt', 'desc')
         .onSnapshot(snap => {
             const inboxEl = document.getElementById('inbox-list');
             if (!inboxEl) return;
-
             if (snap.empty) {
-                inboxEl.innerHTML = `
-                    <div class="inbox-list-empty">
-                        <div class="icon">💬</div>
-                        <p>No messages yet.<br>Tap someone's name on a post to start chatting.</p>
-                    </div>`;
-                updateUnreadBadge(0);
-                return;
+                inboxEl.innerHTML = `<div class="inbox-list-empty"><div class="icon">💬</div><p>No messages yet.<br>Tap a name on a post to start chatting.</p></div>`;
+                updateUnreadBadge(0); return;
             }
-
             let totalUnread = 0;
             inboxEl.innerHTML = '';
-
             snap.forEach(doc => {
                 const c       = doc.data();
                 const other   = (c.members || []).find(m => m !== currentUser.email) || '';
                 const unread  = (c.unread && c.unread[currentUser.email]) || 0;
                 const preview = c.lastText || '';
                 const time    = c.lastAt ? timeAgo(c.lastAt) : '';
-                const initial = other[0] ? other[0].toUpperCase() : '?';
                 totalUnread  += unread;
 
                 const item = document.createElement('div');
                 item.className = 'inbox-item' + (unread > 0 ? ' has-unread' : '');
                 item.onclick   = () => openChat(other);
-                item.innerHTML = `
-                    <div class="inbox-avatar">${initial}</div>
+
+                // Avatar area — will be hydrated with profile pic if available
+                const avatarDiv = document.createElement('div');
+                avatarDiv.className = 'inbox-avatar';
+                avatarDiv.innerText = other[0] ? other[0].toUpperCase() : '?';
+
+                getProfile(other).then(profile => {
+                    if (profile.picUrl) {
+                        avatarDiv.style.backgroundImage = `url(${profile.picUrl})`;
+                        avatarDiv.style.backgroundSize = 'cover';
+                        avatarDiv.style.backgroundPosition = 'center';
+                        avatarDiv.innerText = '';
+                    }
+                });
+
+                item.appendChild(avatarDiv);
+                item.insertAdjacentHTML('beforeend', `
                     <div class="inbox-info">
                         <div class="inbox-name">${other}</div>
                         <div class="inbox-preview">${preview ? (c.lastSender === currentUser.email ? 'You: ' : '') + preview : 'Tap to chat'}</div>
@@ -347,48 +416,35 @@ function listenInbox() {
                     <div class="inbox-right">
                         <div class="inbox-time">${time}</div>
                         ${unread > 0 ? `<div class="inbox-unread-dot">${unread}</div>` : ''}
-                    </div>`;
+                    </div>`);
                 inboxEl.appendChild(item);
             });
-
             updateUnreadBadge(totalUnread);
-
-            // Update inbox count label
             const countEl = document.getElementById('inbox-count');
             if (countEl) {
-                countEl.innerText   = snap.size + ' chat' + (snap.size !== 1 ? 's' : '');
+                countEl.innerText = snap.size + ' chat' + (snap.size !== 1 ? 's' : '');
                 countEl.classList.toggle('hidden', snap.size === 0);
             }
-        }, err => {
-            // Index not ready yet — show plain inbox without ordering
-            console.warn('Inbox needs index, falling back:', err.message);
-            loadInboxFallback();
-        });
+        }, () => loadInboxFallback());
 }
 
 function loadInboxFallback() {
-    db.collection('conversations')
-        .where('members', 'array-contains', currentUser.email)
-        .get().then(snap => {
-            const inboxEl = document.getElementById('inbox-list');
-            if (!inboxEl || snap.empty) return;
-            inboxEl.innerHTML = '';
-            snap.forEach(doc => {
-                const c       = doc.data();
-                const other   = (c.members || []).find(m => m !== currentUser.email) || '';
-                const initial = other[0] ? other[0].toUpperCase() : '?';
-                const item    = document.createElement('div');
-                item.className = 'inbox-item';
-                item.onclick   = () => openChat(other);
-                item.innerHTML = `
-                    <div class="inbox-avatar">${initial}</div>
-                    <div class="inbox-info">
-                        <div class="inbox-name">${other}</div>
-                        <div class="inbox-preview">${c.lastText || 'Tap to chat'}</div>
-                    </div>`;
-                inboxEl.appendChild(item);
-            });
+    db.collection('conversations').where('members', 'array-contains', currentUser.email).get().then(snap => {
+        const inboxEl = document.getElementById('inbox-list');
+        if (!inboxEl || snap.empty) return;
+        inboxEl.innerHTML = '';
+        snap.forEach(doc => {
+            const c = doc.data();
+            const other = (c.members || []).find(m => m !== currentUser.email) || '';
+            const item = document.createElement('div');
+            item.className = 'inbox-item';
+            item.onclick   = () => openChat(other);
+            item.innerHTML = `<div class="inbox-avatar">${other[0]?.toUpperCase() || '?'}</div>
+                <div class="inbox-info"><div class="inbox-name">${other}</div>
+                <div class="inbox-preview">${c.lastText || 'Tap to chat'}</div></div>`;
+            inboxEl.appendChild(item);
         });
+    });
 }
 
 function updateUnreadBadge(count) {
@@ -398,43 +454,46 @@ function updateUnreadBadge(count) {
     badge.classList.toggle('hidden', count === 0);
 }
 
-// ── OPEN CHAT ─────────────────────────────────────────────────────────────────
 function openChat(friendEmail) {
     if (!friendEmail || friendEmail === currentUser.email) return;
     activeChatFriend = friendEmail;
-
-    // Show chat, hide inbox
     document.getElementById('dm-inbox-view').classList.add('hidden');
     document.getElementById('dm-chat-view').classList.remove('hidden');
 
-    // Set topbar info
-    const initial = friendEmail[0].toUpperCase();
-    document.getElementById('chat-topbar-avatar').innerText = initial;
-    document.getElementById('chat-topbar-name').innerText   = friendEmail;
+    // Topbar — try to show profile pic
+    const topAv = document.getElementById('chat-topbar-avatar');
+    topAv.innerText = friendEmail[0].toUpperCase();
+    topAv.style.backgroundImage = '';
+    getProfile(friendEmail).then(profile => {
+        if (profile.picUrl) {
+            topAv.style.backgroundImage = `url(${profile.picUrl})`;
+            topAv.style.backgroundSize = 'cover';
+            topAv.style.backgroundPosition = 'center';
+            topAv.innerText = '';
+        }
+        const nameEl = document.getElementById('chat-topbar-name');
+        nameEl.innerText = profile.displayName || friendEmail;
+    });
 
-    // Mark as read
+    document.getElementById('chat-topbar-name').innerText = friendEmail;
+
     const chatId = getChatId(currentUser.email, friendEmail);
-    db.collection('conversations').doc(chatId).set(
-        { [`unread.${currentUser.email}`]: 0 }, { merge: true }
-    );
+    db.collection('conversations').doc(chatId).set({ [`unread.${currentUser.email}`]: 0 }, { merge: true });
 
-    // Check if friend is online
     db.collection('presence').where('email', '==', friendEmail).limit(1).get().then(snap => {
-        const status = document.getElementById('chat-topbar-status');
+        const statusEl = document.getElementById('chat-topbar-status');
         if (!snap.empty && snap.docs[0].data().online) {
-            if (status) { status.innerText = '🟢 Online now'; status.style.color = '#22c55e'; }
+            statusEl.innerText = '🟢 Online now'; statusEl.style.color = '#22c55e';
         } else {
-            if (status) { status.innerText = 'Active recently'; status.style.color = '#94a3b8'; }
+            statusEl.innerText = 'Active recently'; statusEl.style.color = '#94a3b8';
         }
     });
 
     loadMessages();
 }
 
-// Alias for backwards compatibility with extras.js and admin.js
 function startChat(email) { openChat(email); showView('dm'); }
 
-// ── CLOSE CHAT ────────────────────────────────────────────────────────────────
 function closeChatView() {
     activeChatFriend = null;
     if (messageListener) { messageListener(); messageListener = null; }
@@ -442,24 +501,19 @@ function closeChatView() {
     const inbox = document.getElementById('dm-inbox-view');
     if (chat)  chat.classList.add('hidden');
     if (inbox) inbox.classList.remove('hidden');
-    // clear typing
-    clearTypingIndicator();
 }
 
 function backToDMList() { closeChatView(); }
 
-// ── SEND TEXT DM ──────────────────────────────────────────────────────────────
 function sendDM() {
     const input = document.getElementById('msg-input');
     const text  = input.value.trim();
     if (!text || !activeChatFriend) return;
-
     input.value = '';
     saveMessage({ type: 'text', text });
     clearTypingStatus();
 }
 
-// ── SEND IMAGE DM ─────────────────────────────────────────────────────────────
 async function sendImageDM(inputEl) {
     const file = inputEl.files[0]; if (!file) return;
     inputEl.value = '';
@@ -469,35 +523,24 @@ async function sendImageDM(inputEl) {
     } catch (e) { alert('Could not send image: ' + e.message); }
 }
 
-// ── SAVE MESSAGE TO FIRESTORE ─────────────────────────────────────────────────
 function saveMessage(data) {
     const chatId = getChatId(currentUser.email, activeChatFriend);
     const now    = firebase.firestore.FieldValue.serverTimestamp();
-
-    db.collection('chats').doc(chatId).collection('messages').add({
-        sender: currentUser.email,
-        createdAt: now,
-        ...data
-    });
-
-    // Update conversation index
+    db.collection('chats').doc(chatId).collection('messages').add({ sender: currentUser.email, createdAt: now, ...data });
     db.collection('conversations').doc(chatId).set({
-        members:    [currentUser.email, activeChatFriend],
-        lastText:   data.text || '',
-        lastAt:     now,
+        members: [currentUser.email, activeChatFriend],
+        lastText: data.text || '',
+        lastAt: now,
         lastSender: currentUser.email,
-        [`unread.${activeChatFriend}`]:   firebase.firestore.FieldValue.increment(1),
-        [`unread.${currentUser.email}`]:  0
+        [`unread.${activeChatFriend}`]:  firebase.firestore.FieldValue.increment(1),
+        [`unread.${currentUser.email}`]: 0
     }, { merge: true });
 }
 
-// ── TYPING INDICATOR ──────────────────────────────────────────────────────────
 document.getElementById('msg-input').addEventListener('input', function () {
     if (!activeChatFriend) return;
     const chatId = getChatId(currentUser.email, activeChatFriend);
-    db.collection('typing').doc(chatId).set(
-        { [currentUser.email]: true }, { merge: true }
-    );
+    db.collection('typing').doc(chatId).set({ [currentUser.email]: true }, { merge: true });
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(clearTypingStatus, 2500);
 });
@@ -505,114 +548,319 @@ document.getElementById('msg-input').addEventListener('input', function () {
 function clearTypingStatus() {
     if (!activeChatFriend) return;
     const chatId = getChatId(currentUser.email, activeChatFriend);
-    db.collection('typing').doc(chatId).set(
-        { [currentUser.email]: false }, { merge: true }
-    );
-}
-
-function clearTypingIndicator() {
-    const box = document.getElementById('msg-box');
-    if (box) { const t = box.querySelector('.typing-row'); if (t) t.remove(); }
+    db.collection('typing').doc(chatId).set({ [currentUser.email]: false }, { merge: true });
 }
 
 document.getElementById('msg-input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDM(); }
 });
 
-// ── LOAD MESSAGES ─────────────────────────────────────────────────────────────
 function loadMessages() {
     if (messageListener) { messageListener(); messageListener = null; }
-
     const box    = document.getElementById('msg-box');
     const chatId = getChatId(currentUser.email, activeChatFriend);
     box.innerHTML = '';
 
-    // Listen for typing
-    let typingListener = db.collection('typing').doc(chatId).onSnapshot(doc => {
-        const data     = doc.data() || {};
-        const isTyping = data[activeChatFriend] === true;
+    // Typing listener
+    let typingUnsub = db.collection('typing').doc(chatId).onSnapshot(doc => {
+        const isTyping = (doc.data() || {})[activeChatFriend] === true;
         const existing = box.querySelector('.typing-row');
         if (isTyping && !existing) {
             const row = document.createElement('div');
             row.className = 'msg-row theirs typing-row';
-            row.innerHTML = `
-                <div class="msg-row-avatar">${activeChatFriend[0].toUpperCase()}</div>
-                <div class="msg-bubble-col">
-                    <div class="msg-bubble" style="padding:10px 14px;">
-                        <div class="typing-indicator">
-                            <div class="typing-dot"></div>
-                            <div class="typing-dot"></div>
-                            <div class="typing-dot"></div>
-                        </div>
-                    </div>
-                </div>`;
+            row.innerHTML = `<div class="msg-row-avatar">${activeChatFriend[0].toUpperCase()}</div>
+                <div class="msg-bubble-col"><div class="msg-bubble" style="padding:10px 14px;">
+                <div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>
+                </div></div>`;
             box.appendChild(row);
             box.scrollTop = box.scrollHeight;
-        } else if (!isTyping && existing) {
-            existing.remove();
-        }
+        } else if (!isTyping && existing) { existing.remove(); }
     });
 
-    messageListener = db.collection('chats').doc(chatId)
-        .collection('messages').orderBy('createdAt', 'asc')
+    messageListener = db.collection('chats').doc(chatId).collection('messages')
+        .orderBy('createdAt', 'asc')
         .onSnapshot(snap => {
             const typingRow = box.querySelector('.typing-row');
-            box.innerHTML   = '';
-
+            box.innerHTML = '';
             let lastDate = '';
+
             snap.forEach(doc => {
                 const m      = doc.data();
                 const isMine = m.sender === currentUser.email;
-
-                // Date divider
                 if (m.createdAt) {
-                    const dateStr = new Date(m.createdAt.toMillis()).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-                    if (dateStr !== lastDate) {
-                        lastDate = dateStr;
-                        const div = document.createElement('div');
-                        div.className = 'date-divider';
-                        div.innerText = dateStr;
-                        box.appendChild(div);
+                    const ds = new Date(m.createdAt.toMillis()).toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
+                    if (ds !== lastDate) {
+                        lastDate = ds;
+                        const dv = document.createElement('div');
+                        dv.className = 'date-divider'; dv.innerText = ds;
+                        box.appendChild(dv);
                     }
                 }
-
                 const row = document.createElement('div');
                 row.className = `msg-row ${isMine ? 'mine' : 'theirs'}`;
-
-                let content = '';
-                if (m.type === 'image' && m.imageDataUrl) {
-                    content = `<img src="${m.imageDataUrl}" class="msg-img" onclick="viewImage(this.src)">`;
-                } else {
-                    content = `<div class="msg-bubble">${escapeHtml(m.text || '')}</div>`;
-                }
-
-                row.innerHTML = `
-                    ${!isMine ? `<div class="msg-row-avatar">${m.sender[0].toUpperCase()}</div>` : ''}
-                    <div class="msg-bubble-col">
-                        ${content}
-                        <div class="msg-time-label">${m.createdAt ? timeAgo(m.createdAt) : ''}</div>
-                    </div>`;
+                const content = m.type === 'image' && m.imageDataUrl
+                    ? `<img src="${m.imageDataUrl}" class="msg-img" onclick="viewImage(this.src)">`
+                    : `<div class="msg-bubble">${escapeHtml(m.text || '')}</div>`;
+                row.innerHTML = `${!isMine ? `<div class="msg-row-avatar">${m.sender[0].toUpperCase()}</div>` : ''}
+                    <div class="msg-bubble-col">${content}
+                    <div class="msg-time-label">${m.createdAt ? timeAgo(m.createdAt) : ''}</div></div>`;
                 box.appendChild(row);
             });
 
-            // Re-add typing row at bottom
             if (typingRow) box.appendChild(typingRow);
             box.scrollTop = box.scrollHeight;
-
-            // Unsubscribe old typing listener if messages unsubscribed
-        }, () => { typingListener && typingListener(); });
+        }, () => { typingUnsub && typingUnsub(); });
 }
 
-// ── IMAGE LIGHTBOX ────────────────────────────────────────────────────────────
 function viewImage(src) {
     const lb = document.createElement('div');
     lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer;';
-    lb.innerHTML     = `<img src="${src}" style="max-width:95%;max-height:95vh;border-radius:10px;object-fit:contain;">`;
-    lb.onclick       = () => lb.remove();
+    lb.innerHTML = `<img src="${src}" style="max-width:95%;max-height:95vh;border-radius:10px;object-fit:contain;">`;
+    lb.onclick = () => lb.remove();
     document.body.appendChild(lb);
 }
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
 function escapeHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN SYSTEM (merged from admin.js)
+// ══════════════════════════════════════════════════════════════════════════════
+function initAdmin(user) {
+    const isOwner = user.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+    if (!isOwner) return;
+    injectAdminButton();
+}
+
+function injectAdminButton() {
+    const style = document.createElement('style');
+    style.textContent = `
+        #admin-nav-btn { background:linear-gradient(135deg,#f6d365,#fda085); color:white; border:none; padding:6px 11px; border-radius:8px; font-size:0.8rem; font-weight:700; cursor:pointer; font-family:inherit; transition:opacity 0.2s; }
+        #admin-nav-btn:hover { opacity:0.85; }
+        .owner-badge { display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#f6d365,#fda085);color:white;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:10px;letter-spacing:0.3px;vertical-align:middle;margin-left:5px;text-transform:uppercase;box-shadow:0 1px 4px rgba(253,160,133,0.5); }
+        .admin-badge { display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#667eea,#764ba2);color:white;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:10px;letter-spacing:0.3px;vertical-align:middle;margin-left:5px;text-transform:uppercase;box-shadow:0 1px 4px rgba(118,75,162,0.4); }
+        #admin-panel { position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:5000;display:flex;align-items:center;justify-content:center;font-family:'Inter',sans-serif; }
+        .admin-modal { background:white;border-radius:16px;width:92%;max-width:480px;max-height:88vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,0.25); }
+        .admin-modal-header { padding:20px 22px 14px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:white;z-index:1;border-radius:16px 16px 0 0; }
+        .admin-modal-header h2 { font-size:1.1rem;font-weight:700; }
+        .admin-close { background:#f5f5f5;border:none;border-radius:8px;width:30px;height:30px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center; }
+        .admin-tabs { display:flex;border-bottom:1px solid #eee;padding:0 22px;gap:4px; }
+        .admin-tab { background:none;border:none;padding:10px 12px;font-size:0.82rem;font-weight:600;cursor:pointer;font-family:inherit;color:#888;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all 0.15s; }
+        .admin-tab.active { color:#3b82f6;border-bottom-color:#3b82f6; }
+        .admin-tab-content { padding:18px 22px;display:none; }
+        .admin-tab-content.active { display:block; }
+        .stats-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px; }
+        .stat-card { background:#f9f9f9;border:1px solid #eee;border-radius:10px;padding:14px;text-align:center; }
+        .stat-num { font-size:1.8rem;font-weight:700;color:#3b82f6; }
+        .stat-label { font-size:0.75rem;color:#888;margin-top:2px; }
+        .admin-user-row { display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0f0f0;gap:10px; }
+        .admin-user-row:last-child { border-bottom:none; }
+        .admin-user-info { flex:1;min-width:0; }
+        .admin-user-email { font-size:0.83rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+        .admin-user-meta { font-size:0.72rem;color:#888;margin-top:2px; }
+        .admin-actions { display:flex;gap:6px;flex-shrink:0; }
+        .admin-btn { background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:0.75rem;cursor:pointer;font-family:inherit;transition:all 0.15s;white-space:nowrap; }
+        .admin-btn:hover { background:#f5f5f5; }
+        .admin-btn.danger { color:#ef4444;border-color:#fca5a5; }
+        .admin-btn.danger:hover { background:#fff5f5; }
+        .admin-btn.promote { color:#7c3aed;border-color:#c4b5fd; }
+        .admin-btn.promote:hover { background:#f5f3ff; }
+        .admin-post-row { padding:10px 0;border-bottom:1px solid #f0f0f0;display:flex;align-items:flex-start;gap:10px; }
+        .admin-post-row:last-child { border-bottom:none; }
+        .admin-post-text { flex:1;font-size:0.83rem;color:#333;line-height:1.4; }
+        .admin-post-meta { font-size:0.7rem;color:#aaa;margin-top:3px; }
+        .admin-announce-box textarea { width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;font-size:0.9rem;resize:vertical;min-height:80px;outline:none;margin-bottom:10px; }
+        .admin-announce-btn { background:#3b82f6;color:white;border:none;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;font-family:inherit;font-size:0.88rem;width:100%;transition:background 0.2s; }
+        .admin-announce-btn:hover { background:#2563eb; }
+        .admin-search { width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;font-size:0.85rem;outline:none;margin-bottom:14px; }
+        .admin-empty { text-align:center;color:#aaa;padding:20px;font-size:0.85rem; }
+        #announcement-banner { max-width:540px;margin:0 auto 14px; }
+        .announcement-card { background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:12px;padding:14px 16px;font-size:0.88rem;line-height:1.5;display:flex;align-items:flex-start;gap:10px;box-shadow:0 2px 8px rgba(102,126,234,0.3); }
+        .announcement-icon { font-size:1.2rem;flex-shrink:0;margin-top:1px; }
+        .announcement-text { flex:1; }
+        .announcement-label { font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;opacity:0.8;margin-bottom:3px; }
+        .announcement-dismiss { background:rgba(255,255,255,0.2);border:none;color:white;border-radius:6px;padding:2px 8px;font-size:0.75rem;cursor:pointer;flex-shrink:0;font-family:inherit; }
+    `;
+    document.head.appendChild(style);
+
+    const btn = document.createElement('button');
+    btn.id = 'admin-nav-btn'; btn.innerText = '👑 Admin'; btn.onclick = openAdminPanel;
+    document.querySelector('.nav-links').insertBefore(btn, document.querySelector('.nav-links').firstChild);
+}
+
+function openAdminPanel() {
+    if (document.getElementById('admin-panel')) return;
+    const panel = document.createElement('div');
+    panel.id = 'admin-panel';
+    panel.innerHTML = `<div class="admin-modal">
+        <div class="admin-modal-header">
+            <h2>👑 Admin Panel</h2>
+            <button class="admin-close" onclick="document.getElementById('admin-panel').remove()">✕</button>
+        </div>
+        <div class="admin-tabs">
+            <button class="admin-tab active" onclick="switchAdminTab('stats')">📊 Stats</button>
+            <button class="admin-tab" onclick="switchAdminTab('users')">👥 Users</button>
+            <button class="admin-tab" onclick="switchAdminTab('posts')">📝 Posts</button>
+            <button class="admin-tab" onclick="switchAdminTab('announce')">📢 Announce</button>
+        </div>
+        <div id="admin-tab-stats" class="admin-tab-content active">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="stat-num" id="stat-posts">…</div><div class="stat-label">Posts</div></div>
+                <div class="stat-card"><div class="stat-num" id="stat-users">…</div><div class="stat-label">Users</div></div>
+                <div class="stat-card"><div class="stat-num" id="stat-likes">…</div><div class="stat-label">Total Likes</div></div>
+                <div class="stat-card"><div class="stat-num" id="stat-msgs">…</div><div class="stat-label">Messages</div></div>
+            </div>
+        </div>
+        <div id="admin-tab-users" class="admin-tab-content">
+            <input class="admin-search" placeholder="Search users..." oninput="filterAdminUsers(this.value)">
+            <div id="admin-user-list"><div class="admin-empty">Loading...</div></div>
+        </div>
+        <div id="admin-tab-posts" class="admin-tab-content">
+            <input class="admin-search" placeholder="Search posts..." oninput="filterAdminPosts(this.value)">
+            <div id="admin-post-list"><div class="admin-empty">Loading...</div></div>
+        </div>
+        <div id="admin-tab-announce" class="admin-tab-content">
+            <div class="admin-announce-box">
+                <textarea id="announce-text" placeholder="Write your announcement..."></textarea>
+                <button class="admin-announce-btn" onclick="sendAnnouncement()">📢 Post Announcement</button>
+            </div>
+            <button class="admin-btn danger" style="margin-top:10px;width:100%" onclick="clearAnnouncement()">🗑 Clear Announcement</button>
+        </div>
+    </div>`;
+    document.body.appendChild(panel);
+    panel.addEventListener('click', e => { if (e.target === panel) panel.remove(); });
+    loadAdminStats(); loadAdminUsers(); loadAdminPosts();
+}
+
+window.switchAdminTab = function(tab) {
+    document.querySelectorAll('.admin-tab').forEach((t,i) => t.classList.toggle('active', ['stats','users','posts','announce'][i] === tab));
+    document.querySelectorAll('.admin-tab-content').forEach(c => c.classList.remove('active'));
+    const el = document.getElementById('admin-tab-' + tab);
+    if (el) el.classList.add('active');
+};
+
+function loadAdminStats() {
+    db.collection('posts').get().then(snap => {
+        let likes = 0; const emails = new Set();
+        snap.forEach(doc => { likes += doc.data().likes || 0; emails.add(doc.data().email); });
+        document.getElementById('stat-posts').innerText = snap.size;
+        document.getElementById('stat-users').innerText = emails.size;
+        document.getElementById('stat-likes').innerText = likes;
+    });
+    db.collection('chats').get().then(async snap => {
+        let total = 0;
+        await Promise.all([...snap.docs].map(doc => db.collection('chats').doc(doc.id).collection('messages').get().then(m => total += m.size)));
+        document.getElementById('stat-msgs').innerText = total;
+    });
+}
+
+let allAdminUsers = [], allAdminPosts = [];
+
+function loadAdminUsers() {
+    db.collection('posts').get().then(snap => {
+        const map = {};
+        snap.forEach(doc => {
+            const d = doc.data(); if (!d.email) return;
+            if (!map[d.email]) map[d.email] = { email: d.email, posts: 0, likes: 0 };
+            map[d.email].posts++; map[d.email].likes += d.likes || 0;
+        });
+        allAdminUsers = Object.values(map);
+        renderAdminUsers(allAdminUsers);
+    });
+}
+
+function renderAdminUsers(users) {
+    const list = document.getElementById('admin-user-list'); if (!list) return;
+    if (!users.length) { list.innerHTML = '<div class="admin-empty">No users</div>'; return; }
+    list.innerHTML = '';
+    users.forEach(u => {
+        const isOwnerAcc = u.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+        const row = document.createElement('div'); row.className = 'admin-user-row';
+        db.collection('admins').doc(u.email).get().then(adoc => {
+            const isAdmin = adoc.exists;
+            row.innerHTML = `<div class="admin-user-info">
+                <div class="admin-user-email">${u.email}${isOwnerAcc ? ' <span class="owner-badge">👑 Owner</span>' : ''}${isAdmin && !isOwnerAcc ? ' <span class="admin-badge">🛡 Admin</span>' : ''}</div>
+                <div class="admin-user-meta">${u.posts} posts · ${u.likes} likes</div>
+            </div>
+            <div class="admin-actions">${!isOwnerAcc ? `${isAdmin
+                ? `<button class="admin-btn" onclick="toggleAdmin('${u.email}',false)">Remove Admin</button>`
+                : `<button class="admin-btn promote" onclick="toggleAdmin('${u.email}',true)">Make Admin</button>`}
+                <button class="admin-btn danger" onclick="adminDeleteUserPosts('${u.email}')">🗑</button>`
+                : '<span style="font-size:0.75rem;color:#aaa">Owner</span>'}</div>`;
+        });
+        list.appendChild(row);
+    });
+}
+
+window.filterAdminUsers = q => renderAdminUsers(allAdminUsers.filter(u => u.email.toLowerCase().includes(q.toLowerCase())));
+window.toggleAdmin = function(email, make) {
+    const action = make
+        ? db.collection('admins').doc(email).set({ email, grantedAt: firebase.firestore.FieldValue.serverTimestamp() })
+        : db.collection('admins').doc(email).delete();
+    action.then(() => { alert(make ? `✅ ${email} is now Admin` : `${email} removed`); loadAdminUsers(); });
+};
+window.adminDeleteUserPosts = function(email) {
+    if (!confirm(`Delete ALL posts by ${email}?`)) return;
+    db.collection('posts').where('email','==',email).get().then(snap => {
+        const batch = db.batch();
+        snap.forEach(doc => batch.delete(doc.ref));
+        return batch.commit();
+    }).then(() => { alert('Done'); loadAdminPosts(); });
+};
+
+function loadAdminPosts() {
+    db.collection('posts').orderBy('createdAt','desc').get().then(snap => {
+        allAdminPosts = [];
+        snap.forEach(doc => allAdminPosts.push({ id: doc.id, ...doc.data() }));
+        renderAdminPosts(allAdminPosts);
+    });
+}
+function renderAdminPosts(posts) {
+    const list = document.getElementById('admin-post-list'); if (!list) return;
+    if (!posts.length) { list.innerHTML = '<div class="admin-empty">No posts</div>'; return; }
+    list.innerHTML = '';
+    posts.forEach(p => {
+        const row = document.createElement('div'); row.className = 'admin-post-row';
+        row.innerHTML = `<div class="admin-post-text"><div>${(p.text||'').substring(0,100)}${p.text?.length>100?'...':''}</div>
+            <div class="admin-post-meta">by ${p.email} · 👁 ${p.views||0} · ❤️ ${p.likes||0}</div></div>
+            <button class="admin-btn danger" onclick="adminDeletePost('${p.id}')">🗑</button>`;
+        list.appendChild(row);
+    });
+}
+window.filterAdminPosts = q => renderAdminPosts(allAdminPosts.filter(p => (p.text||'').toLowerCase().includes(q.toLowerCase()) || (p.email||'').toLowerCase().includes(q.toLowerCase())));
+window.adminDeletePost = function(id) {
+    if (!confirm('Delete this post?')) return;
+    db.collection('posts').doc(id).delete().then(() => { allAdminPosts = allAdminPosts.filter(p => p.id !== id); renderAdminPosts(allAdminPosts); });
+};
+
+window.sendAnnouncement = function() {
+    const text = document.getElementById('announce-text').value.trim();
+    if (!text) { alert('Write something first!'); return; }
+    db.collection('announcements').doc('current').set({ text, id: Date.now().toString(), createdAt: firebase.firestore.FieldValue.serverTimestamp() })
+        .then(() => { alert('📢 Posted!'); document.getElementById('announce-text').value = ''; });
+};
+window.clearAnnouncement = function() {
+    if (!confirm('Clear announcement?')) return;
+    db.collection('announcements').doc('current').delete().then(() => alert('Cleared'));
+};
+
+function loadAnnouncementBanner() {
+    db.collection('announcements').doc('current').onSnapshot(doc => {
+        let banner = document.getElementById('announcement-banner');
+        if (!doc.exists || !doc.data().text) { if (banner) banner.remove(); return; }
+        const data = doc.data();
+        if (sessionStorage.getItem('ann-dismissed') === data.id) return;
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'announcement-banner';
+            const fv = document.getElementById('feed-view');
+            if (fv) fv.insertBefore(banner, fv.firstChild);
+        }
+        banner.innerHTML = `<div class="announcement-card">
+            <div class="announcement-icon">📢</div>
+            <div class="announcement-text"><div class="announcement-label">Announcement</div>${data.text}</div>
+            <button class="announcement-dismiss" onclick="sessionStorage.setItem('ann-dismissed','${data.id}');this.closest('#announcement-banner').remove()">✕</button>
+        </div>`;
+    });
 }
