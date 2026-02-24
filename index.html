@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>Post Land</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- AUTH -->
+<div id="auth-overlay">
+    <div class="auth-card">
+        <div class="auth-logo">🌍</div>
+        <h2>Post Land</h2>
+        <p class="auth-sub">Share your world</p>
+        <input type="email" id="auth-email" placeholder="Email address" autocomplete="email">
+        <input type="password" id="auth-pass" placeholder="Password" autocomplete="current-password">
+        <button class="btn" onclick="handleAuth('login')">Sign In</button>
+        <button class="btn btn-outline" onclick="handleAuth('signup')">Create Account</button>
+        <p id="auth-error"></p>
+    </div>
+</div>
+
+<!-- NAV -->
+<nav>
+    <div class="nav-brand" onclick="showView('feed')">
+        <span class="nav-logo">🌍</span> Post Land
+    </div>
+    <div class="nav-links">
+        <button class="nav-btn" data-view="feed" onclick="showView('feed')" title="Feed">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </button>
+        <button class="nav-btn" data-view="create" onclick="showView('create')" title="Create Post">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        </button>
+        <button class="nav-btn" data-view="dm" onclick="showView('dm')" title="Messages">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            <span id="unread-badge" class="unread-badge hidden"></span>
+        </button>
+        <button class="nav-btn" data-view="profile" onclick="showView('profile')" title="Profile">
+            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+    </div>
+</nav>
+
+<div class="container">
+
+    <!-- FEED -->
+    <div id="feed-view">
+        <div id="posts-list"><div class="loading-state">Loading posts...</div></div>
+    </div>
+
+    <!-- CREATE POST -->
+    <div id="create-view">
+        <div class="create-card">
+            <div class="create-header">
+                <div class="create-avatar" id="create-avatar">?</div>
+                <textarea id="post-text" placeholder="What's on your mind?" maxlength="300"></textarea>
+            </div>
+            <div class="create-toolbar">
+                <div class="create-tools">
+                    <label for="post-image" class="tool-btn" title="Add photo">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                    </label>
+                    <input type="file" id="post-image" accept="image/*">
+                    <label class="tool-btn" title="Add tag" onclick="focusTags()">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                    </label>
+                </div>
+                <span id="char-counter" class="char-counter">300</span>
+            </div>
+            <div id="image-preview-wrap" class="hidden">
+                <img id="image-preview" alt="Preview">
+                <button class="remove-img-btn" onclick="removeImage()">✕</button>
+            </div>
+            <input type="text" id="post-tags" placeholder="Tags (e.g. news, fun, tech)" class="tags-input hidden">
+            <p id="upload-status" class="upload-status"></p>
+            <button class="btn publish-btn" id="upload-btn" onclick="uploadPost()">Publish</button>
+        </div>
+    </div>
+
+    <!-- DMs — completely new system -->
+    <div id="dm-view">
+
+        <!-- INBOX -->
+        <div id="dm-inbox-view">
+            <div class="dm-page-header">
+                <h2>Messages</h2>
+                <span id="inbox-count" class="inbox-count hidden"></span>
+            </div>
+            <div id="inbox-list"></div>
+        </div>
+
+        <!-- CHAT -->
+        <div id="dm-chat-view" class="hidden">
+            <div class="chat-topbar">
+                <button class="back-btn" onclick="closeChatView()">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <div class="chat-topbar-info">
+                    <div class="chat-topbar-avatar" id="chat-topbar-avatar"></div>
+                    <div>
+                        <div class="chat-topbar-name" id="chat-topbar-name"></div>
+                        <div class="chat-topbar-status" id="chat-topbar-status">Active recently</div>
+                    </div>
+                </div>
+            </div>
+            <div id="msg-box"></div>
+            <div class="chat-input-bar">
+                <button class="chat-attach-btn" onclick="document.getElementById('dm-image-input').click()" title="Send image">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </button>
+                <input type="file" id="dm-image-input" accept="image/*" onchange="sendImageDM(this)">
+                <input type="text" id="msg-input" placeholder="Message...">
+                <button class="chat-send-btn" onclick="sendDM()" id="chat-send-btn">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- PROFILE -->
+    <div id="profile-view">
+        <div class="profile-card">
+            <div class="profile-avatar-big" id="profile-avatar-big"></div>
+            <div class="profile-email" id="profile-email"></div>
+            <div class="profile-stats" id="profile-stats"></div>
+            <div class="profile-posts" id="profile-posts"></div>
+            <button class="btn btn-outline" style="margin-top:16px;" onclick="logout()">Sign Out</button>
+        </div>
+    </div>
+
+</div>
+
+<script src="app.js"></script>
+<script src="extras.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
