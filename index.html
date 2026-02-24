@@ -114,14 +114,25 @@
 
     // --- AUTHENTICATION ---
     function handleAuth(type) {
-        const email = document.getElementById('auth-email').value;
-        const pass = document.getElementById('auth-pass').value;
+        const email = document.getElementById('auth-email').value.trim();
+        const pass = document.getElementById('auth-pass').value.trim();
         const errorEl = document.getElementById('auth-error');
 
+        errorEl.innerText = "Trying to " + type + "...";
+
+        if(!email || !pass) {
+            errorEl.innerText = "Please enter email and password";
+            return;
+        }
+
         if(type === 'signup') {
-            auth.createUserWithEmailAndPassword(email, pass).catch(e => errorEl.innerText = e.message);
+            auth.createUserWithEmailAndPassword(email, pass)
+                .then(() => errorEl.innerText = "Signed up!")
+                .catch(e => errorEl.innerText = "Error: " + e.message);
         } else {
-            auth.signInWithEmailAndPassword(email, pass).catch(e => errorEl.innerText = e.message);
+            auth.signInWithEmailAndPassword(email, pass)
+                .then(() => errorEl.innerText = "Logged in!")
+                .catch(e => errorEl.innerText = "Error: " + e.message);
         }
     }
 
